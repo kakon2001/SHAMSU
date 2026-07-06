@@ -1,0 +1,18 @@
+# Local runtime data — should never be committed
+workspace/
+sessions.db
+activity_log.jsonl
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Ollama Modelfile is machine-specific config, optional to commit
+# Uncomment the next line if you don't want to share it:
+# Modelfile
+
+# OS junk
+.DS_Store
+Thumbs.db
