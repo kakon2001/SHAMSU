@@ -287,7 +287,7 @@ function renderItem(item) {
       <div class="approval-row">
         <div class="approval-card" id="approvalCard">
           <div class="prompt">approval needed</div>
-          <div class="cmd">${escapeHtml(item.command)}</div>
+          <div class="cmd">${escapeHtml(item.description || item.command || JSON.stringify(item.args || {}))}</div>
           <div class="buttons">
             <button class="btn-allow" onclick="respondApproval(true)">Allow</button>
             <button class="btn-deny" onclick="respondApproval(false)">Deny</button>
