@@ -96,3 +96,4 @@ Roughly in order of value:
 - Web sessions are in-memory only — restarting the server loses history.
 - Single-user, single-machine — no auth, no multi-project handling yet.
 
+ 
