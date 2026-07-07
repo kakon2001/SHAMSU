@@ -256,13 +256,106 @@ def get_or_create_session(session_id: str) -> AgentSession:
     return session
 
 
+def _extract_workspace_search_query(text: str) -> str:
+    """Best-effort extraction for prompts like 'search the workspace for context'."""
+    lowered = text.lower()
+    markers = [" for ", " keyword ", " query "]
+
+    for marker in markers:
+        idx = lowered.rfind(marker)
+        if idx != -1:
+            query = text[idx + len(marker):].strip().strip(".?!:;\"'")
+            if query:
+                return query
+
+    return text.strip()
+
+
+def _direct_workspace_response(text: str) -> tuple[str, str] | None:
+    """
+    Return (tool_name, result) for simple workspace context requests.
+
+    This bypasses the LLM for scan/search/summary so the web app responds fast
+    on slower hardware while still keeping all work local and logged.
+    """
+    normalized = text.strip().lower()
+
+    if "workspace" not in normalized:
+        return None
+
+    if "search" in normalized or "find" in normalized:
+        query = _extract_workspace_search_query(text)
+        for prefix in (
+            "search the workspace for",
+            "search workspace for",
+            "find in the workspace",
+            "find workspace",
+        ):
+            if query.lower().startswith(prefix):
+                query = query[len(prefix):].strip().strip(".?!:;\"'")
+
+        if not query or query.lower() in {"workspace", "the workspace"}:
+            return None
+
+        return "search_workspace", core.search_workspace(query, 30)
+
+    if "summarize" in normalized or "summary" in normalized:
+        summary = core.summarize_workspace(80)
+
+        if "scan" in normalized:
+            scan = core.scan_workspace(3)
+            return "summarize_workspace", f"{summary}\n\nFile tree scan:\n{scan}"
+
+        return "summarize_workspace", summary
+
+    if "scan" in normalized or "list" in normalized or "tree" in normalized:
+        return "scan_workspace", core.scan_workspace(4)
+
+    return None
+
+
+def _handle_direct_workspace_request(session: AgentSession, text: str) -> dict | None:
+    direct = _direct_workspace_response(text)
+
+    if not direct:
+        return None
+
+    name, result = direct
+
+    session.messages.append({"role": "user", "content": text})
+    session._emit({"type": "user_message", "content": text})
+    core.log_event({"type": "user_prompt", "content": text})
+
+    session._emit({"type": "tool_call", "name": name, "args": {"direct": True}})
+    core.log_event({"type": "tool_call", "name": name, "args": {"direct": True}})
+
+    session._emit({"type": "tool_result", "name": name, "result": result})
+    core.log_event({"type": "tool_result", "name": name, "result": result})
+
+    session._emit({"type": "final", "content": result})
+    core.log_event({"type": "final_response", "content": result})
+
+    session.messages.append({
+        "role": "assistant",
+        "content": result,
+    })
+
+    return {
+        "status": "done",
+        "transcript": session.transcript,
+    }
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     session = get_or_create_session(session_id)
 
     try:
-        result = session.send_user_message(req.message)
+        result = _handle_direct_workspace_request(session, req.message)
+
+        if result is None:
+            result = session.send_user_message(req.message)
     except Exception as exc:
         raise HTTPException(500, f"Agent error: {exc}") from exc
 
@@ -364,6 +457,21 @@ def login_history():
                 })
 
     return {"logins": results[-50:]}
+
+
+@app.get("/api/workspace/scan")
+def workspace_scan(max_depth: int = 4):
+    return {"result": core.scan_workspace(max_depth)}
+
+
+@app.get("/api/workspace/search")
+def workspace_search(q: str = "", max_results: int = 30):
+    return {"result": core.search_workspace(q, max_results)}
+
+
+@app.get("/api/workspace/summary")
+def workspace_summary(max_files: int = 80):
+    return {"result": core.summarize_workspace(max_files)}
 
 
 @app.get("/api/history/search")
