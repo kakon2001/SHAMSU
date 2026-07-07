@@ -236,6 +236,11 @@ class ApprovalRequest(BaseModel):
     approved: bool
 
 
+class LoginRequest(BaseModel):
+    username: str
+    client_id: str | None = None
+
+
 def get_or_create_session(session_id: str) -> AgentSession:
     if session_id in SESSIONS:
         return SESSIONS[session_id]
@@ -312,6 +317,53 @@ def model_info():
         "model": core.MODEL_NAME,
         "workspace": str(core.WORKSPACE_DIR),
     }
+
+
+@app.post("/api/login")
+def login(req: LoginRequest):
+    username = req.username.strip() or "local-user"
+
+    event = {
+        "type": "login_event",
+        "username": username,
+        "client_id": req.client_id,
+        "model": core.MODEL_NAME,
+        "workspace": str(core.WORKSPACE_DIR),
+    }
+
+    core.log_event(event)
+
+    return {
+        "status": "ok",
+        "username": username,
+    }
+
+
+@app.get("/api/login-history")
+def login_history():
+    results = []
+
+    if not core.LOG_FILE.exists():
+        return {"logins": []}
+
+    with open(core.LOG_FILE, "r", encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if event.get("type") == "login_event":
+                results.append({
+                    "line": line_number,
+                    "timestamp": event.get("_ts"),
+                    "username": event.get("username"),
+                    "client_id": event.get("client_id"),
+                    "model": event.get("model"),
+                    "workspace": event.get("workspace"),
+                })
+
+    return {"logins": results[-50:]}
 
 
 @app.get("/api/history/search")
