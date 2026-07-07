@@ -241,6 +241,12 @@ class LoginRequest(BaseModel):
     client_id: str | None = None
 
 
+class EditPreviewRequest(BaseModel):
+    path: str
+    old_text: str
+    new_text: str
+
+
 def get_or_create_session(session_id: str) -> AgentSession:
     if session_id in SESSIONS:
         return SESSIONS[session_id]
@@ -281,6 +287,31 @@ def _direct_workspace_response(text: str) -> tuple[str, str] | None:
     normalized = text.strip().lower()
 
     if "workspace" not in normalized:
+        words = normalized.split()
+
+        if normalized.startswith("summarize ") or normalized.startswith("summary "):
+            path = text.split(maxsplit=1)[1].strip().strip(".?!:;\"'")
+            if path:
+                return "summarize_large_file", core.summarize_large_file(path, 20)
+
+        if normalized.startswith("read chunk "):
+            parts = text.strip().split()
+            if len(parts) >= 5 and parts[2].isdigit() and parts[3].lower() == "of":
+                path = " ".join(parts[4:]).strip().strip(".?!:;\"'")
+                return "read_file_chunk", core.read_file_chunk(path, int(parts[2]))
+
+        if normalized.startswith("read "):
+            path = text.split(maxsplit=1)[1].strip().strip(".?!:;\"'")
+            if path:
+                return "read_file", core.read_file(path)
+
+        if normalized.startswith("search ") and " for " in normalized:
+            before, query = text.split(" for ", 1)
+            path = before.split(maxsplit=1)[1].strip().strip(".?!:;\"'")
+            query = query.strip().strip(".?!:;\"'")
+            if path and query:
+                return "search_large_file", core.search_large_file(path, query, 30)
+
         return None
 
     if "search" in normalized or "find" in normalized:
@@ -487,6 +518,12 @@ def workspace_file_summary(path: str, max_chunks: int = 20):
 @app.get("/api/workspace/file-search")
 def workspace_file_search(path: str, q: str = "", max_results: int = 30):
     return {"result": core.search_large_file(path, q, max_results)}
+
+
+@app.post("/api/workspace/preview-edit")
+def workspace_preview_edit(req: EditPreviewRequest):
+    return {"result": core.preview_edit(req.path, req.old_text, req.new_text)}
+
 
 @app.get("/api/history/search")
 def search_history(q: str = ""):

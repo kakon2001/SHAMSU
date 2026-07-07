@@ -6,6 +6,7 @@ the CLI (agent.py) and the web backend (server.py) use identical logic.
 """
 
 import datetime
+import difflib
 import json
 import os
 import sqlite3
@@ -24,7 +25,7 @@ MODEL_SERVER_URL = "http://localhost:11434/v1/chat/completions"
 # Windows CMD: set AGENT_MODEL=qwen3:8b
 # PowerShell:  $env:AGENT_MODEL="qwen3:8b"
 # Mac/Linux:   export AGENT_MODEL=qwen3:8b
-MODEL_NAME = os.environ.get("AGENT_MODEL", "qwen3:8b")
+MODEL_NAME = os.environ.get("AGENT_MODEL", "qwen3:4b")
 
 WORKSPACE_DIR = Path("./workspace").resolve()
 LOG_FILE = Path("./activity_log.jsonl")
@@ -94,11 +95,10 @@ Use scan_workspace, search_workspace, and summarize_workspace when the user
 asks project-wide questions, asks what files exist, asks where something is,
 or asks you to understand the workspace before editing.
 
-For NEW files, use write_file. For EDITING an existing file, always prefer
-edit_file over write_file - it changes only the part you specify and leaves
-the rest of the file untouched, which is safer. When using edit_file, first
-use read_file to see the exact current content, since old_text must match
-character-for-character, including newlines and indentation.
+For NEW files, use write_file. For EDITING an existing file, first read the
+relevant file or chunk, then use preview_edit to inspect the exact diff. If the
+diff is correct, use apply_edit. Both apply_edit and edit_file require user
+approval before changing files.
 
 CRITICAL: Tools that modify files or run commands require user approval.
 If the user denies approval, do not claim the action succeeded.
@@ -227,6 +227,58 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "preview_edit",
+            "description": (
+                "Preview a surgical edit to an existing file as a unified diff. "
+                "This does not modify the file. old_text must match exactly and "
+                "must appear exactly once."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact existing text to replace.",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "The replacement text.",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_edit",
+            "description": (
+                "Apply a previously previewed surgical edit to an existing file. "
+                "This requires user approval, creates a backup first, and returns "
+                "the applied unified diff."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact existing text to replace.",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "The replacement text.",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "restore_backup",
             "description": (
                 "Restore a file from a backup in workspace/.backups. "
@@ -342,6 +394,7 @@ TOOLS = [
 APPROVAL_REQUIRED_TOOLS = {
     "write_file",
     "edit_file",
+    "apply_edit",
     "restore_backup",
     "run_command",
 }
@@ -385,6 +438,18 @@ def describe_tool_call(name: str, args: dict) -> str:
             f"Path: {args.get('path', '')}\n\n"
             f"Replace:\n{old_preview}\n\n"
             f"With:\n{new_preview}"
+        )
+
+    if name == "apply_edit":
+        path = args.get("path", "")
+        diff = preview_edit(path, args.get("old_text", ""), args.get("new_text", ""))
+        if len(diff) > 2000:
+            diff = diff[:2000] + "\n... [diff truncated]"
+
+        return (
+            "Apply approved file edit:\n"
+            f"Path: {path}\n\n"
+            f"Diff preview:\n{diff}"
         )
 
     if name == "restore_backup":
@@ -680,19 +745,10 @@ def write_file(path: str, content: str) -> str:
     return f"{backup_result}\nOK: wrote {len(content)} chars to {path}"
 
 
-def edit_file(path: str, old_text: str, new_text: str) -> str:
-    p = _safe_path(path)
-
-    if not p.exists():
-        return f"ERROR: file not found: {path}. Use write_file to create a new file."
-    if not p.is_file():
-        return f"ERROR: not a file: {path}"
-
-    current = p.read_text(encoding="utf-8")
+def _prepare_replacement(path: str, old_text: str, new_text: str) -> tuple[Path, str, str, str]:
+    p, current = _read_text_file(path)
     count = current.count(old_text)
 
-    # Fallback: some smaller models emit literal backslash-n instead of real
-    # newlines in tool call JSON. If the raw match fails, try converting them.
     if count == 0:
         normalized_old = old_text.replace("\\n", "\n").replace("\\t", "\t")
         normalized_count = current.count(normalized_old)
@@ -703,27 +759,65 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
             count = normalized_count
 
     if count == 0:
-        return (
-            f"ERROR: old_text not found in {path}. It must match the file's "
-            "current content EXACTLY, including whitespace and line breaks. "
-            "Use read_file to see the exact current content first."
+        raise ValueError(
+            "old_text not found. It must match the file's current content "
+            "exactly, including whitespace and line breaks."
         )
 
     if count > 1:
-        return (
-            f"ERROR: old_text appears {count} times in {path}, but it must be "
-            "unique. Include more surrounding context in old_text so it matches "
-            "only one location."
+        raise ValueError(
+            f"old_text appears {count} times, but it must be unique. "
+            "Include more surrounding context."
         )
 
-    backup_result = backup_file(path)
     updated = current.replace(old_text, new_text, 1)
+    return p, current, updated, old_text
+
+
+def _unified_diff(path: str, before: str, after: str) -> str:
+    diff_lines = difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        fromfile=f"{path} (before)",
+        tofile=f"{path} (after)",
+        lineterm="",
+    )
+    diff = "\n".join(diff_lines)
+    return diff if diff else "No changes."
+
+
+def preview_edit(path: str, old_text: str, new_text: str) -> str:
+    try:
+        p, current, updated, normalized_old = _prepare_replacement(path, old_text, new_text)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    return _unified_diff(path, current, updated)
+
+
+def apply_edit(path: str, old_text: str, new_text: str) -> str:
+    try:
+        p, current, updated, normalized_old = _prepare_replacement(path, old_text, new_text)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    diff = _unified_diff(path, current, updated)
+    backup_result = backup_file(path)
     p.write_text(updated, encoding="utf-8")
 
     return (
         f"{backup_result}\n"
-        f"OK: replaced {len(old_text)} chars with {len(new_text)} chars in {path}"
+        f"OK: applied edit to {path}\n\n"
+        f"Diff:\n{diff}"
     )
+
+
+def edit_file(path: str, old_text: str, new_text: str) -> str:
+    return apply_edit(path, old_text, new_text)
 
 
 def list_dir(path: str = ".") -> str:
@@ -945,6 +1039,12 @@ def run_tool(name: str, args: dict) -> str:
 
         if name == "edit_file":
             return edit_file(args["path"], args["old_text"], args["new_text"])
+
+        if name == "preview_edit":
+            return preview_edit(args["path"], args["old_text"], args["new_text"])
+
+        if name == "apply_edit":
+            return apply_edit(args["path"], args["old_text"], args["new_text"])
 
         if name == "restore_backup":
             return restore_backup(args["backup_name"], args["target_path"])
