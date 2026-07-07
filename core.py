@@ -5,11 +5,11 @@ Config, tool implementations, model calling, and logging live here so both
 the CLI (agent.py) and the web backend (server.py) use identical logic.
 """
 
+import datetime
 import json
-import subprocess
 import os
 import sqlite3
-import datetime
+import subprocess
 from pathlib import Path
 
 import requests
@@ -85,8 +85,12 @@ init_db()
 # ---- System prompt ----------------------------------------------------
 
 SYSTEM_PROMPT = """You are a local coding agent. You have tools to read, write,
-edit, and list files, and to run shell commands, all scoped to a workspace
-directory.
+edit, list, scan, search, and summarize files, and to run shell commands,
+all scoped to a workspace directory.
+
+Use scan_workspace, search_workspace, and summarize_workspace when the user
+asks project-wide questions, asks what files exist, asks where something is,
+or asks you to understand the workspace before editing.
 
 For NEW files, use write_file. For EDITING an existing file, always prefer
 edit_file over write_file - it changes only the part you specify and leaves
@@ -129,7 +133,8 @@ TOOLS = [
             "name": "write_file",
             "description": (
                 "Create a NEW file, or completely overwrite an existing file, "
-                "with given content. This requires user approval before execution."
+                "with given content. This requires user approval before execution. "
+                "If the file already exists, a backup is created first."
             ),
             "parameters": {
                 "type": "object",
@@ -149,7 +154,7 @@ TOOLS = [
                 "Make a surgical edit to an EXISTING file by replacing one exact "
                 "block of text with another, leaving the rest of the file untouched. "
                 "old_text must match exactly and must appear exactly once. "
-                "This requires user approval before execution."
+                "This requires user approval before execution. A backup is created first."
             ),
             "parameters": {
                 "type": "object",
@@ -174,12 +179,92 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "restore_backup",
+            "description": (
+                "Restore a file from a backup in workspace/.backups. "
+                "This requires user approval before execution."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "backup_name": {"type": "string"},
+                    "target_path": {"type": "string"},
+                },
+                "required": ["backup_name", "target_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_dir",
             "description": "List files in a workspace directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "default": "."}
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scan_workspace",
+            "description": (
+                "Scan the workspace file tree and return a safe overview of files "
+                "and folders. Use this before answering project-wide questions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_depth": {
+                        "type": "integer",
+                        "default": 4,
+                        "description": "Maximum folder depth to scan from workspace root.",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_workspace",
+            "description": (
+                "Search text files inside the workspace for a keyword or phrase. "
+                "Returns matching file paths, line numbers, and snippets."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Maximum number of matching lines to return.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "summarize_workspace",
+            "description": (
+                "Create a basic deterministic summary of the workspace, including "
+                "file counts, folder overview, file types, and important-looking files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_files": {
+                        "type": "integer",
+                        "default": 80,
+                        "description": "Maximum number of file paths to include in summary.",
+                    }
                 },
             },
         },
@@ -209,6 +294,7 @@ TOOLS = [
 APPROVAL_REQUIRED_TOOLS = {
     "write_file",
     "edit_file",
+    "restore_backup",
     "run_command",
 }
 
@@ -253,6 +339,13 @@ def describe_tool_call(name: str, args: dict) -> str:
             f"With:\n{new_preview}"
         )
 
+    if name == "restore_backup":
+        return (
+            "Restore backup:\n"
+            f"Backup: {args.get('backup_name', '')}\n"
+            f"Target: {args.get('target_path', '')}"
+        )
+
     return f"Tool: {name}\nArgs: {json.dumps(args, indent=2)}"
 
 
@@ -270,6 +363,87 @@ def _safe_path(rel_path: str) -> Path:
     return p
 
 
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".csv", ".xml",
+    ".sql", ".sh", ".bat", ".ps1", ".env", ".example",
+}
+
+IGNORED_DIR_NAMES = {
+    ".git", ".venv", "venv", "env", "__pycache__", "node_modules",
+    ".backups", "dist", "build", ".idea", ".vscode",
+}
+
+IGNORED_FILE_NAMES = {
+    "activity_log.jsonl",
+    "sessions.db",
+}
+
+BINARY_EXTENSIONS = {
+    ".pyc", ".pyo", ".exe", ".dll", ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".pdf", ".zip", ".7z", ".tar", ".gz", ".mp4", ".mp3", ".wav", ".ico",
+    ".db", ".sqlite", ".sqlite3",
+}
+
+
+def _relative_path(path: Path) -> str:
+    return str(path.relative_to(WORKSPACE_DIR)).replace("\\", "/")
+
+
+def _should_skip_dir(path: Path) -> bool:
+    return path.name in IGNORED_DIR_NAMES
+
+
+def _should_skip_file(path: Path) -> bool:
+    if path.name in IGNORED_FILE_NAMES:
+        return True
+    if path.suffix.lower() in BINARY_EXTENSIONS:
+        return True
+    return False
+
+
+def _is_text_file(path: Path) -> bool:
+    if path.name in {"Dockerfile", "Makefile", "README", "LICENSE"}:
+        return True
+    return path.suffix.lower() in TEXT_EXTENSIONS
+
+
+def backup_file(path: str) -> str:
+    p = _safe_path(path)
+
+    if not p.exists():
+        return f"SKIPPED: no existing file to backup for {path}"
+
+    if not p.is_file():
+        return f"ERROR: cannot backup non-file path: {path}"
+
+    backup_dir = WORKSPACE_DIR / ".backups"
+    backup_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = path.replace("\\", "__").replace("/", "__")
+    backup_path = backup_dir / f"{safe_name}.{timestamp}.bak"
+
+    backup_path.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+
+    return f"OK: backup created at .backups/{backup_path.name}"
+
+
+def restore_backup(backup_name: str, target_path: str) -> str:
+    backup_path = _safe_path(f".backups/{backup_name}")
+    target = _safe_path(target_path)
+
+    if not backup_path.exists():
+        return f"ERROR: backup not found: {backup_name}"
+    if not backup_path.is_file():
+        return f"ERROR: backup is not a file: {backup_name}"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    return f"OK: restored {backup_name} to {target_path}"
+
+
 def read_file(path: str) -> str:
     p = _safe_path(path)
     if not p.exists():
@@ -281,9 +455,13 @@ def read_file(path: str) -> str:
 
 def write_file(path: str, content: str) -> str:
     p = _safe_path(path)
+
+    backup_result = backup_file(path) if p.exists() else f"SKIPPED: new file {path}"
+
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
-    return f"OK: wrote {len(content)} chars to {path}"
+
+    return f"{backup_result}\nOK: wrote {len(content)} chars to {path}"
 
 
 def edit_file(path: str, old_text: str, new_text: str) -> str:
@@ -322,10 +500,14 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
             "only one location."
         )
 
+    backup_result = backup_file(path)
     updated = current.replace(old_text, new_text, 1)
     p.write_text(updated, encoding="utf-8")
 
-    return f"OK: replaced {len(old_text)} chars with {len(new_text)} chars in {path}"
+    return (
+        f"{backup_result}\n"
+        f"OK: replaced {len(old_text)} chars with {len(new_text)} chars in {path}"
+    )
 
 
 def list_dir(path: str = ".") -> str:
@@ -338,6 +520,168 @@ def list_dir(path: str = ".") -> str:
 
     entries = sorted(os.listdir(p))
     return "\n".join(entries) if entries else "(empty)"
+
+
+def scan_workspace(max_depth: int = 4) -> str:
+    max_depth = max(1, min(int(max_depth), 10))
+    lines = [f"Workspace: {WORKSPACE_DIR}", f"Max depth: {max_depth}", ""]
+
+    total_dirs = 0
+    total_files = 0
+    shown = 0
+    max_entries = 300
+
+    for root, dirs, files in os.walk(WORKSPACE_DIR):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(WORKSPACE_DIR)
+        depth = 0 if str(rel_root) == "." else len(rel_root.parts)
+
+        dirs[:] = sorted([d for d in dirs if not _should_skip_dir(root_path / d)])
+        files = sorted(files)
+
+        if depth >= max_depth:
+            dirs[:] = []
+
+        indent = "  " * depth
+        root_label = "." if str(rel_root) == "." else _relative_path(root_path)
+        lines.append(f"{indent}{root_label}/")
+        shown += 1
+        total_dirs += len(dirs)
+
+        for file_name in files:
+            file_path = root_path / file_name
+
+            if _should_skip_file(file_path):
+                continue
+
+            size = file_path.stat().st_size if file_path.exists() else 0
+            lines.append(f"{indent}  {file_name} ({size} bytes)")
+            total_files += 1
+            shown += 1
+
+            if shown >= max_entries:
+                lines.append("")
+                lines.append("[scan truncated: too many entries]")
+                lines.append(f"Total dirs seen: {total_dirs}")
+                lines.append(f"Total files seen: {total_files}")
+                return "\n".join(lines)
+
+    lines.append("")
+    lines.append(f"Total dirs seen: {total_dirs}")
+    lines.append(f"Total files seen: {total_files}")
+    return "\n".join(lines)
+
+
+def search_workspace(query: str, max_results: int = 20) -> str:
+    query = query.strip()
+
+    if not query:
+        return "ERROR: search query is empty."
+
+    max_results = max(1, min(int(max_results), 100))
+    query_lower = query.lower()
+    matches = []
+
+    for root, dirs, files in os.walk(WORKSPACE_DIR):
+        root_path = Path(root)
+        dirs[:] = sorted([d for d in dirs if not _should_skip_dir(root_path / d)])
+
+        for file_name in sorted(files):
+            file_path = root_path / file_name
+
+            if _should_skip_file(file_path) or not _is_text_file(file_path):
+                continue
+
+            try:
+                if file_path.stat().st_size > 250_000:
+                    continue
+
+                lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except Exception:
+                continue
+
+            for line_no, line in enumerate(lines, start=1):
+                if query_lower in line.lower():
+                    snippet = line.strip()
+                    if len(snippet) > 180:
+                        snippet = snippet[:180] + "..."
+                    matches.append(f"{_relative_path(file_path)}:{line_no}: {snippet}")
+
+                    if len(matches) >= max_results:
+                        return "\n".join(matches)
+
+    if not matches:
+        return f"No matches found for: {query}"
+
+    return "\n".join(matches)
+
+
+def summarize_workspace(max_files: int = 80) -> str:
+    max_files = max(10, min(int(max_files), 300))
+
+    files = []
+    dirs = set()
+    ext_counts = {}
+
+    for root, walk_dirs, walk_files in os.walk(WORKSPACE_DIR):
+        root_path = Path(root)
+        walk_dirs[:] = sorted([d for d in walk_dirs if not _should_skip_dir(root_path / d)])
+
+        for d in walk_dirs:
+            dirs.add(_relative_path(root_path / d))
+
+        for file_name in sorted(walk_files):
+            file_path = root_path / file_name
+
+            if _should_skip_file(file_path):
+                continue
+
+            rel = _relative_path(file_path)
+            files.append(rel)
+
+            ext = file_path.suffix.lower() or "[no extension]"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+    important_names = {
+        "README.md", "requirements.txt", "package.json", "pyproject.toml",
+        "server.py", "core.py", "agent.py", "index.html", ".env.example",
+    }
+
+    important_files = [f for f in files if Path(f).name in important_names]
+
+    lines = [
+        f"Workspace: {WORKSPACE_DIR}",
+        f"Total folders: {len(dirs)}",
+        f"Total files: {len(files)}",
+        "",
+        "File types:",
+    ]
+
+    if ext_counts:
+        for ext, count in sorted(ext_counts.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"- {ext}: {count}")
+    else:
+        lines.append("- none")
+
+    lines.append("")
+    lines.append("Important-looking files:")
+
+    if important_files:
+        for f in important_files[:30]:
+            lines.append(f"- {f}")
+    else:
+        lines.append("- none detected")
+
+    lines.append("")
+    lines.append(f"Files shown, max {max_files}:")
+
+    for f in files[:max_files]:
+        lines.append(f"- {f}")
+
+    if len(files) > max_files:
+        lines.append(f"... {len(files) - max_files} more files not shown")
+
+    return "\n".join(lines)
 
 
 def execute_command(command: str) -> str:
@@ -377,8 +721,20 @@ def run_tool(name: str, args: dict) -> str:
         if name == "edit_file":
             return edit_file(args["path"], args["old_text"], args["new_text"])
 
+        if name == "restore_backup":
+            return restore_backup(args["backup_name"], args["target_path"])
+
         if name == "list_dir":
             return list_dir(args.get("path", "."))
+
+        if name == "scan_workspace":
+            return scan_workspace(args.get("max_depth", 4))
+
+        if name == "search_workspace":
+            return search_workspace(args["query"], args.get("max_results", 20))
+
+        if name == "summarize_workspace":
+            return summarize_workspace(args.get("max_files", 80))
 
         if name == "run_command":
             raise RuntimeError("run_command must be handled by execute_command() after approval.")
@@ -394,7 +750,7 @@ def run_tool(name: str, args: dict) -> str:
 def log_event(event: dict):
     event["_ts"] = datetime.datetime.now().isoformat()
     with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event) + "\n")
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 # ---- Context management -----------------------------------------------
@@ -567,5 +923,11 @@ def call_model(messages: list) -> dict:
 
 def parse_tool_call(call: dict):
     name = call["function"]["name"]
-    args = json.loads(call["function"]["arguments"])
+    raw_args = call["function"].get("arguments", "{}")
+
+    if isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        args = json.loads(raw_args or "{}")
+
     return name, args
