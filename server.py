@@ -1,4 +1,4 @@
-"""
+﻿"""
 Local Coding Agent - web backend.
 
 Wraps the same core.py logic as agent.py, but exposes it over HTTP with
@@ -474,6 +474,20 @@ def workspace_summary(max_files: int = 80):
     return {"result": core.summarize_workspace(max_files)}
 
 
+@app.get("/api/workspace/file-chunk")
+def workspace_file_chunk(path: str, chunk_index: int = 0, chunk_size: int = core.DEFAULT_CHUNK_CHARS):
+    return {"result": core.read_file_chunk(path, chunk_index, chunk_size)}
+
+
+@app.get("/api/workspace/file-summary")
+def workspace_file_summary(path: str, max_chunks: int = 20):
+    return {"result": core.summarize_large_file(path, max_chunks)}
+
+
+@app.get("/api/workspace/file-search")
+def workspace_file_search(path: str, q: str = "", max_results: int = 30):
+    return {"result": core.search_large_file(path, q, max_results)}
+
 @app.get("/api/history/search")
 def search_history(q: str = ""):
     query = q.strip().lower()
@@ -515,3 +529,5 @@ def index():
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
