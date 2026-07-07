@@ -5,6 +5,7 @@ Wraps the same core.py logic as agent.py, but exposes it over HTTP with
 a pause/resume approval flow instead of a blocking terminal input().
 """
 
+import json
 import uuid
 from pathlib import Path
 
@@ -311,6 +312,38 @@ def model_info():
         "model": core.MODEL_NAME,
         "workspace": str(core.WORKSPACE_DIR),
     }
+
+
+@app.get("/api/history/search")
+def search_history(q: str = ""):
+    query = q.strip().lower()
+
+    if not query:
+        return {"results": []}
+
+    results = []
+
+    if not core.LOG_FILE.exists():
+        return {"results": []}
+
+    with open(core.LOG_FILE, "r", encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            searchable = json.dumps(event, ensure_ascii=False).lower()
+
+            if query in searchable:
+                results.append({
+                    "line": line_number,
+                    "timestamp": event.get("_ts"),
+                    "type": event.get("type"),
+                    "event": event,
+                })
+
+    return {"results": results[-50:]}
 
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
