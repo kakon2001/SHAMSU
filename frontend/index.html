@@ -250,6 +250,13 @@
 <script>
 let sessionId = localStorage.getItem('agent_session_id') || null;
 let renderedCount = 0;
+let localUsername = localStorage.getItem('local_agent_username') || null;
+let localClientId = localStorage.getItem('local_agent_client_id') || null;
+
+if (!localClientId) {
+  localClientId = crypto.randomUUID();
+  localStorage.setItem('local_agent_client_id', localClientId);
+}
 
 const chatInner = document.getElementById('chatInner');
 const chatArea = document.getElementById('chatArea');
@@ -366,6 +373,31 @@ function hideThinking() {
 }
 
 function setBusy(busy) { input.disabled = busy; sendBtn.disabled = busy; }
+
+async function ensureLocalLogin() {
+  if (!localUsername) {
+    localUsername = prompt('Enter local username for login history:', 'local-user') || 'local-user';
+    localStorage.setItem('local_agent_username', localUsername);
+  }
+
+  const footer = document.getElementById('sidebarFooter');
+  if (footer) {
+    footer.innerHTML = `user <b>${escapeHtml(localUsername)}</b><br>model <b id="sidebarModel">…</b>`;
+  }
+
+  try {
+    await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: localUsername,
+        client_id: localClientId,
+      }),
+    });
+  } catch {
+    // Login history should not block the local app.
+  }
+}
 
 async function loadModelInfo() {
   try {
@@ -518,6 +550,7 @@ async function respondApproval(approved) {
 }
 
 // ---- Init ----
+ensureLocalLogin();
 loadModelInfo();
 loadSessionList();
 if (sessionId) {
