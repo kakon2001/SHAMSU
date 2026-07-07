@@ -1,4 +1,4 @@
-"""
+﻿"""
 Local Coding Agent - shared core.
 
 Config, tool implementations, model calling, and logging live here so both
@@ -24,7 +24,7 @@ MODEL_SERVER_URL = "http://localhost:11434/v1/chat/completions"
 # Windows CMD: set AGENT_MODEL=qwen3:8b
 # PowerShell:  $env:AGENT_MODEL="qwen3:8b"
 # Mac/Linux:   export AGENT_MODEL=qwen3:8b
-MODEL_NAME = os.environ.get("AGENT_MODEL", "qwen3:1.7b")
+MODEL_NAME = os.environ.get("AGENT_MODEL", "qwen3:8b")
 
 WORKSPACE_DIR = Path("./workspace").resolve()
 LOG_FILE = Path("./activity_log.jsonl")
@@ -88,6 +88,8 @@ SYSTEM_PROMPT = """You are a local coding agent. You have tools to read, write,
 edit, list, scan, search, and summarize files, and to run shell commands,
 all scoped to a workspace directory.
 
+Large-file rule: do not read huge files all at once. If read_file says a file is large, use read_file_chunk, search_large_file, or summarize_large_file instead. For big project tasks, scan first, search for relevant symbols/phrases, then read only the chunks needed for the change.
+
 Use scan_workspace, search_workspace, and summarize_workspace when the user
 asks project-wide questions, asks what files exist, asks where something is,
 or asks you to understand the workspace before editing.
@@ -128,6 +130,52 @@ TOOLS = [
         },
     },
     {
+        "type": "function",
+        "function": {
+            "name": "read_file_chunk",
+            "description": "Read one chunk of a large text file in the workspace without loading the whole file into the model context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "chunk_index": {"type": "integer", "default": 0},
+                    "chunk_size": {"type": "integer", "default": 12000}
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "summarize_large_file",
+            "description": "Create a deterministic outline of a large text file: size, line count, chunk count, headings, and representative snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "max_chunks": {"type": "integer", "default": 20}
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_large_file",
+            "description": "Search one large text file by keyword and return line numbers, chunk indexes, and snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 30}
+                },
+                "required": ["path", "query"],
+            },
+        },
+    },    {
         "type": "function",
         "function": {
             "name": "write_file",
@@ -385,6 +433,11 @@ BINARY_EXTENSIONS = {
     ".db", ".sqlite", ".sqlite3",
 }
 
+MAX_DIRECT_READ_CHARS = 50_000
+DEFAULT_CHUNK_CHARS = 12_000
+MAX_CHUNK_CHARS = 40_000
+CHUNK_OVERLAP_CHARS = 500
+
 
 def _relative_path(path: Path) -> str:
     return str(path.relative_to(WORKSPACE_DIR)).replace("\\", "/")
@@ -444,13 +497,176 @@ def restore_backup(backup_name: str, target_path: str) -> str:
     return f"OK: restored {backup_name} to {target_path}"
 
 
-def read_file(path: str) -> str:
+def _read_text_file(path: str) -> tuple[Path, str]:
     p = _safe_path(path)
     if not p.exists():
-        return f"ERROR: file not found: {path}"
+        raise FileNotFoundError(f"file not found: {path}")
     if not p.is_file():
-        return f"ERROR: not a file: {path}"
-    return p.read_text(encoding="utf-8")
+        raise ValueError(f"not a file: {path}")
+    if _should_skip_file(p) or not _is_text_file(p):
+        raise ValueError(f"not a supported text file: {path}")
+    return p, p.read_text(encoding="utf-8", errors="replace")
+
+
+def _chunk_bounds(total_chars: int, chunk_size: int) -> list[tuple[int, int]]:
+    chunk_size = max(1000, min(int(chunk_size), MAX_CHUNK_CHARS))
+    bounds = []
+    start = 0
+
+    while start < total_chars:
+        end = min(start + chunk_size, total_chars)
+        bounds.append((start, end))
+        if end >= total_chars:
+            break
+        start = max(0, end - CHUNK_OVERLAP_CHARS)
+
+    return bounds
+
+
+def _line_number_at(text: str, char_index: int) -> int:
+    return text.count("\n", 0, max(0, char_index)) + 1
+
+
+def read_file(path: str) -> str:
+    try:
+        p, content = _read_text_file(path)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    if len(content) <= MAX_DIRECT_READ_CHARS:
+        return content
+
+    bounds = _chunk_bounds(len(content), DEFAULT_CHUNK_CHARS)
+    preview = content[:3000]
+    return (
+        f"LARGE_FILE: {path}\n"
+        f"Size: {len(content)} characters, {content.count(chr(10)) + 1} lines, {len(bounds)} chunks.\n"
+        "This file is too large to read safely in one model call. "
+        "Use summarize_large_file, search_large_file, or read_file_chunk.\n\n"
+        "Preview of the beginning:\n"
+        f"{preview}"
+    )
+
+
+def read_file_chunk(path: str, chunk_index: int = 0, chunk_size: int = DEFAULT_CHUNK_CHARS) -> str:
+    try:
+        p, content = _read_text_file(path)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    bounds = _chunk_bounds(len(content), chunk_size)
+    if not bounds:
+        return f"EMPTY_FILE: {path}"
+
+    chunk_index = int(chunk_index)
+    if chunk_index < 0 or chunk_index >= len(bounds):
+        return f"ERROR: chunk_index {chunk_index} out of range. Valid range: 0 to {len(bounds) - 1}."
+
+    start, end = bounds[chunk_index]
+    start_line = _line_number_at(content, start)
+    end_line = _line_number_at(content, end)
+    chunk = content[start:end]
+
+    return (
+        f"FILE_CHUNK: {path}\n"
+        f"Chunk: {chunk_index + 1}/{len(bounds)}\n"
+        f"Characters: {start}-{end} of {len(content)}\n"
+        f"Approx lines: {start_line}-{end_line}\n\n"
+        f"{chunk}"
+    )
+
+
+def summarize_large_file(path: str, max_chunks: int = 20) -> str:
+    try:
+        p, content = _read_text_file(path)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    max_chunks = max(1, min(int(max_chunks), 80))
+    bounds = _chunk_bounds(len(content), DEFAULT_CHUNK_CHARS)
+    lines = content.splitlines()
+    headings = []
+
+    for line_no, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "class ", "def ", "function ", "const ", "let ", "var ", "import ", "export ")):
+            headings.append(f"line {line_no}: {stripped[:160]}")
+        if len(headings) >= 60:
+            break
+
+    result = [
+        f"File: {path}",
+        f"Size: {len(content)} characters",
+        f"Lines: {len(lines)}",
+        f"Chunks: {len(bounds)} at about {DEFAULT_CHUNK_CHARS} chars each",
+        "",
+        "Important-looking lines:",
+    ]
+
+    if headings:
+        result.extend(f"- {h}" for h in headings)
+    else:
+        result.append("- No obvious headings/functions/classes found.")
+
+    result.extend(["", f"Chunk map, first {min(max_chunks, len(bounds))} chunks:"])
+    for idx, (start, end) in enumerate(bounds[:max_chunks]):
+        chunk_text = content[start:end]
+        snippet = " ".join(chunk_text.strip().split())[:220]
+        start_line = _line_number_at(content, start)
+        end_line = _line_number_at(content, end)
+        result.append(f"- chunk {idx}: chars {start}-{end}, approx lines {start_line}-{end_line}, preview: {snippet}")
+
+    if len(bounds) > max_chunks:
+        result.append(f"... {len(bounds) - max_chunks} more chunks not shown")
+
+    return "\n".join(result)
+
+
+def search_large_file(path: str, query: str, max_results: int = 30) -> str:
+    query = query.strip()
+    if not query:
+        return "ERROR: search query is empty."
+
+    try:
+        p, content = _read_text_file(path)
+    except FileNotFoundError:
+        return f"ERROR: file not found: {path}"
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    max_results = max(1, min(int(max_results), 100))
+    query_lower = query.lower()
+    bounds = _chunk_bounds(len(content), DEFAULT_CHUNK_CHARS)
+    matches = []
+    char_cursor = 0
+
+    for line_no, line in enumerate(content.splitlines(keepends=True), start=1):
+        if query_lower in line.lower():
+            chunk_index = 0
+            for idx, (start, end) in enumerate(bounds):
+                if start <= char_cursor < end:
+                    chunk_index = idx
+                    break
+            snippet = line.strip()
+            if len(snippet) > 220:
+                snippet = snippet[:220] + "..."
+            matches.append(f"{path}:{line_no} [chunk {chunk_index}]: {snippet}")
+            if len(matches) >= max_results:
+                break
+        char_cursor += len(line)
+
+    if not matches:
+        return f"No matches found for: {query} in {path}"
+
+    return "\n".join(matches)
 
 
 def write_file(path: str, content: str) -> str:
@@ -715,6 +931,15 @@ def run_tool(name: str, args: dict) -> str:
         if name == "read_file":
             return read_file(args["path"])
 
+        if name == "read_file_chunk":
+            return read_file_chunk(args["path"], args.get("chunk_index", 0), args.get("chunk_size", DEFAULT_CHUNK_CHARS))
+
+        if name == "summarize_large_file":
+            return summarize_large_file(args["path"], args.get("max_chunks", 20))
+
+        if name == "search_large_file":
+            return search_large_file(args["path"], args["query"], args.get("max_results", 30))
+
         if name == "write_file":
             return write_file(args["path"], args["content"])
 
@@ -931,3 +1156,5 @@ def parse_tool_call(call: dict):
         args = json.loads(raw_args or "{}")
 
     return name, args
+
+
