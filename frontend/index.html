@@ -64,6 +64,28 @@
   .session-item.active { background: var(--amber-dim); color: var(--amber); border-color: rgba(232,163,61,0.3); }
   .session-item .ts { display: block; font-size: 10.5px; color: var(--text-dim); margin-top: 2px; }
 
+  #historySearchInput {
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 12px;
+    outline: none;
+  }
+  #historySearchInput:focus { border-color: var(--amber); }
+  #historyResults {
+    max-height: 180px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   #sidebarFooter {
     border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px;
     font-size: 11px; color: var(--text-dim);
@@ -191,8 +213,8 @@
   #inputform button:disabled { opacity: 0.35; cursor: default; }
   #inputHint { text-align: center; font-size: 10.5px; color: var(--text-dim); margin-top: 8px; }
 
-  #chatArea::-webkit-scrollbar, #sessionList::-webkit-scrollbar { width: 8px; }
-  #chatArea::-webkit-scrollbar-thumb, #sessionList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  #chatArea::-webkit-scrollbar, #sessionList::-webkit-scrollbar, #historyResults::-webkit-scrollbar { width: 8px; }
+  #chatArea::-webkit-scrollbar-thumb, #sessionList::-webkit-scrollbar-thumb, #historyResults::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -200,6 +222,11 @@
 <div id="sidebar">
   <div class="brand"><span class="dot"></span>local-coding-agent</div>
   <button id="newChatBtn">+ New Chat</button>
+
+  <div id="sessionListLabel">Search History</div>
+  <input id="historySearchInput" type="text" placeholder="Search prompts/tools...">
+  <div id="historyResults"></div>
+
   <div id="sessionListLabel">Recent Sessions</div>
   <div id="sessionList"></div>
   <div id="sidebarFooter">model <b id="sidebarModel">…</b></div>
@@ -216,7 +243,7 @@
       <input id="messageInput" type="text" placeholder="Describe what you want the agent to do…" autocomplete="off" autofocus>
       <button type="submit" id="sendBtn">➤</button>
     </form>
-    <div id="inputHint">Shell commands require your approval before running.</div>
+    <div id="inputHint">File changes and shell commands require your approval before running.</div>
   </div>
 </div>
 
@@ -231,6 +258,8 @@ const input = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const topStatus = document.getElementById('topStatus');
 const sessionList = document.getElementById('sessionList');
+const historySearchInput = document.getElementById('historySearchInput');
+const historyResults = document.getElementById('historyResults');
 
 function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
 function scrollDown() { chatArea.scrollTop = chatArea.scrollHeight; }
@@ -287,7 +316,7 @@ function renderItem(item) {
       <div class="approval-row">
         <div class="approval-card" id="approvalCard">
           <div class="prompt">approval needed</div>
-          <div class="cmd">${escapeHtml(item.command)}</div>
+          <div class="cmd">${escapeHtml(item.description || item.command || JSON.stringify(item.args || {}))}</div>
           <div class="buttons">
             <button class="btn-allow" onclick="respondApproval(true)">Allow</button>
             <button class="btn-deny" onclick="respondApproval(false)">Deny</button>
@@ -361,6 +390,46 @@ async function loadSessionList() {
     });
   } catch { /* backend not up yet */ }
 }
+
+async function searchHistory(query) {
+  if (!query.trim()) {
+    historyResults.innerHTML = '';
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/history/search?q=${encodeURIComponent(query)}`);
+    const data = await response.json();
+
+    historyResults.innerHTML = '';
+
+    if (!data.results.length) {
+      historyResults.innerHTML = `<div class="session-item">No matches</div>`;
+      return;
+    }
+
+    data.results.slice().reverse().forEach(result => {
+      const event = result.event || {};
+      const label = event.type || 'event';
+      const preview = JSON.stringify(event).slice(0, 120);
+
+      const item = el(`
+        <div class="session-item">
+          ${escapeHtml(label)}
+          <span class="ts">${escapeHtml(preview)}...</span>
+        </div>
+      `);
+
+      historyResults.appendChild(item);
+    });
+  } catch {
+    historyResults.innerHTML = `<div class="session-item">Search failed</div>`;
+  }
+}
+
+historySearchInput.addEventListener('input', () => {
+  searchHistory(historySearchInput.value);
+});
 
 async function resumeSession(id) {
   sessionId = id;
