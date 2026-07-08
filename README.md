@@ -16,6 +16,10 @@ This project is a local Claude-style coding agent with a FastAPI backend and Rea
 - Persistent history through MySQL when available, or local SQLite fallback.
 - JSON-lines activity logging at `logs/activity.log`.
 
+## Project Documents
+
+- Product requirements: `docs/PRD.md`
+
 ## Setup
 
 Pull the model:
@@ -54,6 +58,14 @@ venv\Scripts\activate
 python cli.py ask "Explain the files in the workspace"
 python cli.py sessions
 python cli.py history <session_id>
+```
+
+Run the basic harness after the backend is running:
+
+```powershell
+cd backend
+venv\Scripts\activate
+python harness.py
 ```
 
 ## Configuration
@@ -112,6 +124,10 @@ python cli.py history <session_id>
 ```
 
 If the agent asks to edit a file or run a shell command, the CLI prints the command or diff and asks for approval in the terminal.
+
+## Harness
+
+The basic harness is implemented in `backend/harness.py`. It checks backend health, active model reporting, history storage, session creation, activity history, CLI availability, and session deletion.
 
 ## Git Notes
 
