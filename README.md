@@ -11,6 +11,9 @@ This project is a local Claude-style coding agent with a FastAPI backend and Rea
 - Command-line client for terminal usage.
 - Workspace file tree and Monaco editor.
 - Agent tools for listing, reading, searching, writing files, and running shell commands.
+- Basic context handler for chunking and searching workspace files.
+- Minimal stdio MCP-style server for safe workspace tools.
+- Cross-platform shell command runner foundation.
 - Approval flow for file edits and shell commands.
 - Session, prompt, tool, approval, file-change, and error history.
 - Persistent history through MySQL when available, or local SQLite fallback.
@@ -110,6 +113,17 @@ The activity response separates prompts, tool calls, approvals, file changes, an
 
 If MySQL is not running, the backend automatically stores sessions in `sessions.db` at the project root. Activity events are also written to `logs/activity.log`.
 
+## Context API
+
+The context handler chunks workspace text files and searches relevant snippets.
+
+```text
+GET /api/context/summary
+GET /api/context/search?query=calculator
+```
+
+The agent can also call `search_context` when it needs broad project context.
+
 ## CLI
 
 The CLI is implemented in `backend/cli.py`. It calls the same backend API as the web app, so it uses the same sessions and history.
@@ -128,6 +142,23 @@ If the agent asks to edit a file or run a shell command, the CLI prints the comm
 ## Harness
 
 The basic harness is implemented in `backend/harness.py`. It checks backend health, active model reporting, history storage, session creation, activity history, CLI availability, and session deletion.
+
+## MCP Server
+
+The MCP server foundation is implemented in `backend/mcp_server.py`. It exposes safe read-only workspace tools over stdio:
+
+- `list_directory`
+- `read_file`
+- `search_files`
+- `search_context`
+
+Run it from the backend folder:
+
+```powershell
+python mcp_server.py
+```
+
+It accepts JSON-RPC messages on stdin for `initialize`, `tools/list`, and `tools/call`.
 
 ## Git Notes
 

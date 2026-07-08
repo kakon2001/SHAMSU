@@ -91,20 +91,21 @@ Build a local Claude-like coding agent that can chat with a user, inspect worksp
 - Root README and frontend README.
 - Git cleanup through `.gitignore`.
 - Configurable model name and model output limits.
+- Basic context handler with workspace file chunking and keyword-based context search.
+- Minimal stdio MCP-style server exposing safe workspace read/search tools.
+- Cross-platform shell runner foundation for Windows, macOS, and Linux.
 
 ### Partially Implemented
 
 - Security: workspace sandbox and approval exist, but shell command risk checks need improvement.
-- Context engineering: selected file context exists, but full retrieval/chunking/summarization is not implemented.
-- Performance: model limits and lightweight demo model support exist, but streaming is not implemented.
+- Context engineering: selected file context and keyword-based chunk retrieval exist; embeddings and long-term summarization are future work.
+- Performance: model limits, lightweight demo model support, and streaming for normal chat exist.
 
 ### Not Yet Implemented
 
-- MCP server.
-- Full infinite context handler.
-- Formal evaluation harness.
-- Streaming responses.
-- Cross-platform shell execution for macOS/Linux.
+- Full MCP integration with external client configuration.
+- Full infinite context handler with embeddings and long-term summarization.
+- Full MacBook M4 Pro validation on real macOS hardware.
 - Authentication for the web app.
 
 ## 5. Functional Requirements
@@ -210,11 +211,8 @@ The demo is successful if:
 
 ## 9. Future Work
 
-1. Add evaluation harness.
-2. Add stronger shell command security.
-3. Add streaming responses.
-4. Add context chunking and retrieval.
-5. Add summarization for long conversations.
-6. Add MCP server integration.
-7. Add macOS/Linux shell support.
-8. Add authentication.
+1. Add embedding-based context retrieval.
+2. Add summarization for long conversations.
+3. Expand MCP server integration and external client configuration.
+4. Validate on MacBook M4 Pro hardware.
+5. Add authentication.
