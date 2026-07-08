@@ -6,6 +6,7 @@ A local web coding agent inspired by Claude-style workflows. The app runs a loca
 
 - React + TypeScript frontend with chat, file tree, editor tabs, approval cards, and activity history.
 - FastAPI backend with Ollama chat integration.
+- Command-line client in `backend/cli.py`.
 - Local model default: `qwen3:8b`.
 - Sandboxed file tools: list, read, search, and write files under `AGENT_WORKDIR`.
 - Approval-gated shell and file-write tools.

@@ -8,6 +8,7 @@ This project is a local Claude-style coding agent with a FastAPI backend and Rea
 - Default model: `qwen3:8b`.
 - FastAPI backend.
 - React + TypeScript frontend.
+- Command-line client for terminal usage.
 - Workspace file tree and Monaco editor.
 - Agent tools for listing, reading, searching, writing files, and running shell commands.
 - Approval flow for file edits and shell commands.
@@ -44,6 +45,16 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+Use the CLI after the backend is running:
+
+```powershell
+cd backend
+venv\Scripts\activate
+python cli.py ask "Explain the files in the workspace"
+python cli.py sessions
+python cli.py history <session_id>
+```
 
 ## Configuration
 
@@ -86,6 +97,21 @@ GET /api/sessions/{session_id}/activity
 The activity response separates prompts, tool calls, approvals, file changes, and errors.
 
 If MySQL is not running, the backend automatically stores sessions in `sessions.db` at the project root. Activity events are also written to `logs/activity.log`.
+
+## CLI
+
+The CLI is implemented in `backend/cli.py`. It calls the same backend API as the web app, so it uses the same sessions and history.
+
+Examples:
+
+```powershell
+python cli.py ask "Say hello"
+python cli.py ask "Explain calculator.py" --file calculator.py
+python cli.py sessions
+python cli.py history <session_id>
+```
+
+If the agent asks to edit a file or run a shell command, the CLI prints the command or diff and asks for approval in the terminal.
 
 ## Git Notes
 
