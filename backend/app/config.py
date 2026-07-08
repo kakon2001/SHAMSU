@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     shell_timeout_seconds: int = 120
     max_tool_output_chars: int = 8000
     max_read_file_chars: int = 60000
+    model_num_ctx: int = 8192
+    max_model_output_tokens: int = 1200
 
     @property
     def workdir_path(self) -> Path:

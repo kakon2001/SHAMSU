@@ -134,6 +134,7 @@ class AgentSession:
         self._turn_task: Optional[asyncio.Task] = None
         self._stop_requested = False
         self._last_file_path: Optional[str] = None
+        self._tools_enabled = True
         self.busy = False
 
     def info(self) -> dict[str, Any]:
@@ -192,6 +193,7 @@ class AgentSession:
             self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
+        self._tools_enabled = _should_enable_tools(user_message, context_files or [])
         self._turn_task = asyncio.create_task(self._run_turn(user_message, context_files or []))
 
     def resolve_approval(self, approval_id: str, approved: bool) -> None:
@@ -220,7 +222,7 @@ class AgentSession:
 
     async def _run_turn(self, user_message: str, context_files: list[str]) -> None:
         self.conversation.append(
-            {"role": "user", "content": self._with_file_context(user_message, context_files)}
+            {"role": "user", "content": "/no_think\n" + self._with_file_context(user_message, context_files)}
         )
         self._emit({"type": "user_message", "content": user_message, "context_files": context_files})
         try:
@@ -307,9 +309,14 @@ class AgentSession:
         response = await self._client.chat(
             model=settings.model_name,
             messages=self.conversation,
-            tools=TOOL_SCHEMAS,
+            tools=TOOL_SCHEMAS if self._tools_enabled else None,
             stream=False,
-            options={"temperature": 0.2},
+            think=False,
+            options={
+                "temperature": 0.2,
+                "num_ctx": settings.model_num_ctx,
+                "num_predict": settings.max_model_output_tokens,
+            },
         )
         message = response.get("message") or {}
         content = message.get("content") or ""
@@ -444,3 +451,30 @@ def _preview_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
         content = args.get("content") or ""
         return {"path": args.get("path"), "content": f"<{len(content)} chars>"}
     return args
+
+
+def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
+    if context_files:
+        return True
+    text = user_message.lower()
+    keywords = {
+        "file",
+        "folder",
+        "workspace",
+        "read",
+        "search",
+        "edit",
+        "change",
+        "write",
+        "create",
+        "delete",
+        "save",
+        "run",
+        "test",
+        "fix",
+        "code",
+        "diff",
+        "open",
+        "list",
+    }
+    return any(keyword in text for keyword in keywords)

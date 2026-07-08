@@ -52,6 +52,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "workspace": str(settings.workdir_path),
+        "model": settings.model_name,
         "history_store": db.storage_mode(),
         "activity_log": str(settings.activity_log_file),
     }
