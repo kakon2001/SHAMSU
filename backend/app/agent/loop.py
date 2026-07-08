@@ -15,6 +15,7 @@ transcript and conversation survive a backend restart.
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from . import tools
 from .tools import MUTATING_TOOLS, TOOL_NAMES, TOOL_SCHEMAS
 
 DEFAULT_TITLE = "New chat"
+activity_log = logging.getLogger("agent.activity")
 
 
 def _utcnow() -> datetime:
@@ -153,7 +155,9 @@ class AgentSession:
 
     def _emit(self, event: dict[str, Any]) -> None:
         event.setdefault("timestamp", _utcnow().isoformat())
+        event.setdefault("session_id", self.id)
         self.events.append(event)
+        activity_log.info(json.dumps(event, ensure_ascii=False, default=str))
         self._changed.set()
 
     def drain(self) -> list[dict[str, Any]]:

@@ -12,7 +12,8 @@ This project is a local Claude-style coding agent with a FastAPI backend and Rea
 - Agent tools for listing, reading, searching, writing files, and running shell commands.
 - Approval flow for file edits and shell commands.
 - Session, prompt, tool, approval, file-change, and error history.
-- Optional MySQL persistence.
+- Persistent history through MySQL when available, or local SQLite fallback.
+- JSON-lines activity logging at `logs/activity.log`.
 
 ## Setup
 
@@ -58,6 +59,8 @@ MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=
 MYSQL_DATABASE=coding_agent
+HISTORY_DB_PATH=../sessions.db
+ACTIVITY_LOG_PATH=../logs/activity.log
 ```
 
 Frontend configuration is in `frontend/.env`.
@@ -81,6 +84,8 @@ GET /api/sessions/{session_id}/activity
 ```
 
 The activity response separates prompts, tool calls, approvals, file changes, and errors.
+
+If MySQL is not running, the backend automatically stores sessions in `sessions.db` at the project root. Activity events are also written to `logs/activity.log`.
 
 ## Git Notes
 

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,20 @@ from . import db
 from .agent.session_manager import manager
 from .config import settings
 from .routes import agent, files
+
+
+def configure_activity_logging() -> None:
+    logger = logging.getLogger("agent.activity")
+    logger.setLevel(logging.INFO)
+    if any(isinstance(handler, logging.FileHandler) for handler in logger.handlers):
+        return
+    handler = logging.FileHandler(settings.activity_log_file, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+
+
+configure_activity_logging()
 
 
 @asynccontextmanager
@@ -37,5 +52,6 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "workspace": str(settings.workdir_path),
-        "database": "mysql" if db.is_available() else "memory-only",
+        "history_store": db.storage_mode(),
+        "activity_log": str(settings.activity_log_file),
     }

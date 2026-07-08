@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     mysql_user: str = "root"
     mysql_password: str = ""
     mysql_database: str = "coding_agent"
+    history_db_path: str = "../sessions.db"
+    activity_log_path: str = "../logs/activity.log"
 
     max_tool_iterations: int = 16
     shell_timeout_seconds: int = 120
@@ -26,6 +28,18 @@ class Settings(BaseSettings):
     def workdir_path(self) -> Path:
         path = Path(self.agent_workdir).expanduser().resolve()
         path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def history_db_file(self) -> Path:
+        path = Path(self.history_db_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def activity_log_file(self) -> Path:
+        path = Path(self.activity_log_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
 

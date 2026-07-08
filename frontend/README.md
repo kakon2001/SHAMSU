@@ -10,7 +10,8 @@ A local web coding agent inspired by Claude-style workflows. The app runs a loca
 - Sandboxed file tools: list, read, search, and write files under `AGENT_WORKDIR`.
 - Approval-gated shell and file-write tools.
 - Session history with prompt/tool/approval/file/error events.
-- Optional MySQL persistence for chat sessions and activity logs.
+- Persistent history through MySQL when available, or local SQLite fallback.
+- JSON-lines activity logging at `logs/activity.log`.
 
 ## Requirements
 
@@ -64,9 +65,11 @@ MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=
 MYSQL_DATABASE=coding_agent
+HISTORY_DB_PATH=../sessions.db
+ACTIVITY_LOG_PATH=../logs/activity.log
 ```
 
-If MySQL is not running, the backend still works, but sessions are memory-only until restart.
+If MySQL is not running, the backend stores sessions in `sessions.db` at the project root.
 
 ## History
 
@@ -80,6 +83,8 @@ The backend stores the complete event log for each session:
 - errors
 
 Use `GET /api/sessions/{session_id}/activity` for a categorized activity-history payload.
+
+Every event is also written as one JSON line in `logs/activity.log`.
 
 ## Git Hygiene
 
