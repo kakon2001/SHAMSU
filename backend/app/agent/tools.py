@@ -15,6 +15,31 @@ from ..config import settings
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea", ".vscode"}
 
+BLOCKED_COMMAND_PATTERNS = [
+    r"\bRemove-Item\b.*\s-(?:Recurse|r)\b.*\s-(?:Force|f)\b",
+    r"\brm\b.*\s-rf\b",
+    r"\bdel\b.*\s/[sq]\b",
+    r"\bformat\b",
+    r"\bshutdown\b",
+    r"\brestart-computer\b",
+    r"\bstop-computer\b",
+    r"\breg\s+(?:add|delete|import)\b",
+    r"\bSet-ExecutionPolicy\b",
+]
+
+RISKY_COMMAND_PATTERNS = [
+    r"\bRemove-Item\b",
+    r"\brm\b",
+    r"\bdel\b",
+    r"\bgit\s+reset\b",
+    r"\bgit\s+clean\b",
+    r"\bgit\s+push\b",
+    r"\bpip\s+install\b",
+    r"\bnpm\s+install\b",
+    r"\bInvoke-WebRequest\b",
+    r"\bcurl(?:\.exe)?\b",
+]
+
 
 def resolve_in_workspace(rel_path: str) -> Path:
     """Resolve a path relative to the workspace root, rejecting escapes."""
@@ -29,6 +54,25 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... [truncated, {len(text) - limit} more characters]"
+
+
+def analyze_shell_command(command: str) -> dict[str, str | bool]:
+    normalized = command.strip()
+    for pattern in BLOCKED_COMMAND_PATTERNS:
+        if re.search(pattern, normalized, flags=re.IGNORECASE):
+            return {
+                "allowed": False,
+                "risk": "blocked",
+                "reason": "Command matches a blocked destructive/system-level pattern.",
+            }
+    for pattern in RISKY_COMMAND_PATTERNS:
+        if re.search(pattern, normalized, flags=re.IGNORECASE):
+            return {
+                "allowed": True,
+                "risk": "high",
+                "reason": "Command may change files, install packages, access the network, or alter Git state.",
+            }
+    return {"allowed": True, "risk": "normal", "reason": "No high-risk pattern detected."}
 
 
 # ---------------------------------------------------------------------------

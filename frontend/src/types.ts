@@ -24,6 +24,8 @@ export type AgentEvent =
       path?: string;
       diff?: string;
       is_new_file?: boolean;
+      risk?: string;
+      risk_reason?: string;
       timestamp?: string;
     }
   | { type: "approval_resolved"; id: string; approved: boolean; timestamp?: string }
@@ -65,6 +67,8 @@ export type ChatItem =
       path?: string;
       diff?: string;
       isNewFile?: boolean;
+      risk?: string;
+      riskReason?: string;
       status: "pending" | "approved" | "rejected";
     }
   | { kind: "error"; id: string; content: string };

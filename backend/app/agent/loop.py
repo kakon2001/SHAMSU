@@ -368,7 +368,17 @@ class AgentSession:
             command = args.get("command")
             if not command:
                 return "Error: 'command' argument is required"
-            request = {"type": "approval_request", "id": call_id, "name": name, "command": command}
+            analysis = tools.analyze_shell_command(command)
+            if not analysis["allowed"]:
+                return f"Error: blocked shell command. {analysis['reason']}"
+            request = {
+                "type": "approval_request",
+                "id": call_id,
+                "name": name,
+                "command": command,
+                "risk": analysis["risk"],
+                "risk_reason": analysis["reason"],
+            }
         elif name == "write_file":
             path = args.get("path")
             content = args.get("content")

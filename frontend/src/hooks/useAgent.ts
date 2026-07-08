@@ -62,6 +62,8 @@ function eventsToItems(
             path: ev.path,
             diff: ev.diff,
             isNewFile: ev.is_new_file,
+            risk: ev.risk,
+            riskReason: ev.risk_reason,
             status: "pending",
           },
         ];

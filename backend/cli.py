@@ -96,6 +96,9 @@ def prompt_for_approval(event: dict[str, Any]) -> bool:
     name = event.get("name")
     print("\nApproval required")
     if name == "run_shell":
+        risk = event.get("risk")
+        if risk and risk != "normal":
+            print(f"Risk: {risk} - {event.get('risk_reason')}")
         print(f"Command:\n{event.get('command')}")
     else:
         print(f"File: {event.get('path')}")

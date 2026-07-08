@@ -21,7 +21,14 @@ export function ApprovalCard({ item, onRespond }: Props) {
       </div>
 
       {item.name === "run_shell" ? (
-        <pre className="approval-card__command">{item.command}</pre>
+        <>
+          {item.risk && item.risk !== "normal" && (
+            <div className="approval-card__risk">
+              {item.risk.toUpperCase()}: {item.riskReason}
+            </div>
+          )}
+          <pre className="approval-card__command">{item.command}</pre>
+        </>
       ) : (
         <>
           <div className="approval-card__path">{item.path}</div>
