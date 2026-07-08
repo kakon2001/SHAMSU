@@ -135,6 +135,7 @@ class AgentSession:
         self._stop_requested = False
         self._last_file_path: Optional[str] = None
         self._tools_enabled = True
+        self._streamed_message_id: Optional[str] = None
         self.busy = False
 
     def info(self) -> dict[str, Any]:
@@ -173,11 +174,15 @@ class AgentSession:
         return list(self.events)
 
     async def wait_for_pause(self) -> None:
-        """Block until the turn finishes or stops at a pending approval."""
+        """Block until new events are available, the turn finishes, or approval is needed."""
         while True:
+            if self._delivered < len(self.events):
+                return
             if not self.busy or self._pending_approvals:
                 return
             self._changed.clear()
+            if self._delivered < len(self.events):
+                return
             if not self.busy or self._pending_approvals:
                 return
             await self._changed.wait()
@@ -274,7 +279,11 @@ class AgentSession:
                     content = ""
                 else:
                     self.conversation.append({"role": "assistant", "content": content})
-                    self._emit({"type": "assistant_message", "content": content})
+                    event = {"type": "assistant_message", "content": content}
+                    if self._streamed_message_id:
+                        event["id"] = self._streamed_message_id
+                        self._streamed_message_id = None
+                    self._emit(event)
                     await self._maybe_offer_implicit_edit(content)
                     return
 
@@ -306,6 +315,31 @@ class AgentSession:
         self.conversation.append({"role": "assistant", "content": "(hit tool-call limit)"})
 
     async def _get_model_response(self) -> tuple[str, list[dict[str, Any]]]:
+        if not self._tools_enabled:
+            message_id = uuid.uuid4().hex[:12]
+            self._streamed_message_id = message_id
+            chunks: list[str] = []
+            stream = await self._client.chat(
+                model=settings.model_name,
+                messages=self.conversation,
+                stream=True,
+                think=False,
+                options={
+                    "temperature": 0.2,
+                    "num_ctx": settings.model_num_ctx,
+                    "num_predict": settings.max_model_output_tokens,
+                },
+            )
+            async for part in stream:
+                self._check_stopped()
+                message = part.get("message") or {}
+                chunk = message.get("content") or ""
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                self._emit({"type": "assistant_delta", "id": message_id, "content": chunk})
+            return "".join(chunks), []
+
         response = await self._client.chat(
             model=settings.model_name,
             messages=self.conversation,
@@ -361,6 +395,11 @@ class AgentSession:
             if not query:
                 return "Error: 'query' argument is required"
             return tools.search_files(query, args.get("path") or ".")
+        if name == "search_context":
+            query = args.get("query")
+            if not query:
+                return "Error: 'query' argument is required"
+            return tools.search_context(query)
         return f"Error: unknown tool '{name}'"
 
     async def _execute_with_approval(self, call_id: str, name: str, args: dict[str, Any]) -> str:
@@ -486,5 +525,9 @@ def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
         "diff",
         "open",
         "list",
+        "context",
+        "summarize",
+        "explain",
+        "project",
     }
     return any(keyword in text for keyword in keywords)

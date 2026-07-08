@@ -39,7 +39,24 @@ function eventsToItems(
           ];
         break;
       case "assistant_message":
-        items = [...items, { kind: "assistant", id: uid(), content: ev.content }];
+        if (ev.id && items.some((it) => it.kind === "assistant" && it.id === ev.id)) {
+          items = items.map((it) =>
+            it.kind === "assistant" && it.id === ev.id ? { ...it, content: ev.content } : it,
+          );
+        } else {
+          items = [...items, { kind: "assistant", id: ev.id ?? uid(), content: ev.content }];
+        }
+        break;
+      case "assistant_delta":
+        if (items.some((it) => it.kind === "assistant" && it.id === ev.id)) {
+          items = items.map((it) =>
+            it.kind === "assistant" && it.id === ev.id
+              ? { ...it, content: it.content + ev.content }
+              : it,
+          );
+        } else {
+          items = [...items, { kind: "assistant", id: ev.id, content: ev.content }];
+        }
         break;
       case "tool_call":
         items = [...items, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, status: "running" }];

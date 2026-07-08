@@ -70,8 +70,13 @@ def render_events(events: list[dict[str, Any]], base: str, session_id: str) -> b
     handled_approval = False
     for event in events:
         event_type = event.get("type")
+        if event_type == "assistant_delta":
+            print(event.get("content", ""), end="", flush=True)
         if event_type == "assistant_message":
-            print(event.get("content", ""))
+            if event.get("id"):
+                print()
+            else:
+                print(event.get("content", ""))
         elif event_type == "tool_call":
             print(f"[tool] {event.get('name')} {json.dumps(event.get('args') or {})}")
         elif event_type == "tool_result":

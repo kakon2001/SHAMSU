@@ -7,10 +7,13 @@ gates them behind user approval before calling the executors below.
 
 import asyncio
 import difflib
+import os
+import platform
 import re
 import subprocess
 from pathlib import Path
 
+from .. import context_index
 from ..config import settings
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea", ".vscode"}
@@ -138,14 +141,19 @@ def search_files(query: str, path: str = ".") -> str:
     return "\n".join(matches) if matches else "No matches found."
 
 
+def search_context(query: str) -> str:
+    return context_index.format_context_results(query)
+
+
 # ---------------------------------------------------------------------------
 # Mutating tools (executed only after user approval)
 # ---------------------------------------------------------------------------
 
 def _run_shell_sync(command: str) -> str:
+    shell_command = _shell_invocation(command)
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+            shell_command,
             cwd=str(settings.workdir_path),
             capture_output=True,
             text=True,
@@ -163,6 +171,15 @@ def _run_shell_sync(command: str) -> str:
         parts.append(f"[stderr]\n{proc.stderr.strip()}")
     parts.append(f"[exit code: {proc.returncode}]")
     return _truncate("\n".join(parts), settings.max_tool_output_chars)
+
+
+def _shell_invocation(command: str) -> list[str]:
+    if platform.system().lower().startswith("win"):
+        return ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]
+    shell = os.environ.get("SHELL")
+    if not shell:
+        shell = "/bin/zsh" if Path("/bin/zsh").exists() else "/bin/bash"
+    return [shell, "-lc", command]
 
 
 async def run_shell(command: str) -> str:
@@ -251,6 +268,23 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "search_context",
+            "description": (
+                "Search chunked workspace context for relevant snippets. Use this when the user asks broad "
+                "questions about the project or needs context across multiple files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural language or keyword query."}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": (
                 "Write the complete new contents of a file (relative path). The user is shown a diff and must "
@@ -271,7 +305,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "run_shell",
             "description": (
-                "Run a PowerShell command in the workspace root (e.g. run tests, install packages, git, create/"
+                "Run a shell command in the workspace root (e.g. run tests, install packages, git, create/"
                 "delete/move files). The user must approve the command before it runs. Returns stdout, stderr "
                 "and the exit code."
             ),
@@ -286,6 +320,6 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "search_files"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "search_files", "search_context"}
 MUTATING_TOOLS = {"write_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS

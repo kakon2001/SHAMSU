@@ -13,7 +13,8 @@ export interface FileContent {
 /** Events recorded by the backend agent session. */
 export type AgentEvent =
   | { type: "user_message"; content: string; context_files?: string[]; timestamp?: string }
-  | { type: "assistant_message"; content: string; timestamp?: string }
+  | { type: "assistant_delta"; id: string; content: string; timestamp?: string }
+  | { type: "assistant_message"; id?: string; content: string; timestamp?: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown>; timestamp?: string }
   | { type: "tool_result"; id: string; name: string; ok: boolean; preview: string; timestamp?: string }
   | {
