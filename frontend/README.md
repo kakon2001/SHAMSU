@@ -1,32 +1,88 @@
-# React + TypeScript + Vite
+# Local Coding Agent
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A local web coding agent inspired by Claude-style workflows. The app runs a local Ollama model, lets the user chat with an agent, browse and edit files inside a sandboxed workspace, approve file/shell actions, and keep session/activity history.
 
-Currently, two official plugins are available:
+## Current Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React + TypeScript frontend with chat, file tree, editor tabs, approval cards, and activity history.
+- FastAPI backend with Ollama chat integration.
+- Local model default: `qwen3:8b`.
+- Sandboxed file tools: list, read, search, and write files under `AGENT_WORKDIR`.
+- Approval-gated shell and file-write tools.
+- Session history with prompt/tool/approval/file/error events.
+- Optional MySQL persistence for chat sessions and activity logs.
 
-## React Compiler
+## Requirements
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Python 3.12 or newer.
+- Node.js 20 or newer.
+- Ollama running locally.
+- Qwen3 8B model pulled in Ollama.
+- Optional: MySQL or XAMPP MySQL for persistent history.
 
-## Expanding the Oxlint configuration
+## Setup
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+Install the model:
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+ollama pull qwen3:8b
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Backend:
+
+```powershell
+cd ..\backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
+```
+
+Frontend:
+
+```powershell
+cd ..\frontend
+npm install
+copy .env.example .env
+npm run dev
+```
+
+Open the Vite URL, usually `http://localhost:5173`.
+
+## Configuration
+
+Backend settings live in `backend/.env`.
+
+```env
+AGENT_WORKDIR=../workspace
+OLLAMA_HOST=http://localhost:11434
+MODEL_NAME=qwen3:8b
+FRONTEND_ORIGIN=http://localhost:5173
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=coding_agent
+```
+
+If MySQL is not running, the backend still works, but sessions are memory-only until restart.
+
+## History
+
+The backend stores the complete event log for each session:
+
+- user prompts
+- assistant replies
+- tool calls and results
+- approval requests and decisions
+- changed files
+- errors
+
+Use `GET /api/sessions/{session_id}/activity` for a categorized activity-history payload.
+
+## Git Hygiene
+
+Generated files are ignored by the root `.gitignore`, including Python cache files, virtual environments, frontend builds, Node dependencies, logs, and local environment files.
+
+Do not commit `backend/.env`, `venv/`, `node_modules/`, `dist/`, or `__pycache__/`.

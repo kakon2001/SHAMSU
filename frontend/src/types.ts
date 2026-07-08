@@ -12,10 +12,10 @@ export interface FileContent {
 
 /** Events recorded by the backend agent session. */
 export type AgentEvent =
-  | { type: "user_message"; content: string; context_files?: string[] }
-  | { type: "assistant_message"; content: string }
-  | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; id: string; name: string; ok: boolean; preview: string }
+  | { type: "user_message"; content: string; context_files?: string[]; timestamp?: string }
+  | { type: "assistant_message"; content: string; timestamp?: string }
+  | { type: "tool_call"; id: string; name: string; args: Record<string, unknown>; timestamp?: string }
+  | { type: "tool_result"; id: string; name: string; ok: boolean; preview: string; timestamp?: string }
   | {
       type: "approval_request";
       id: string;
@@ -24,14 +24,24 @@ export type AgentEvent =
       path?: string;
       diff?: string;
       is_new_file?: boolean;
+      timestamp?: string;
     }
-  | { type: "approval_resolved"; id: string; approved: boolean }
-  | { type: "files_changed"; paths: string[] }
-  | { type: "turn_end" }
-  | { type: "error"; message: string };
+  | { type: "approval_resolved"; id: string; approved: boolean; timestamp?: string }
+  | { type: "files_changed"; paths: string[]; timestamp?: string }
+  | { type: "turn_end"; timestamp?: string }
+  | { type: "error"; message: string; timestamp?: string };
 
 export interface AgentResponse {
   events: AgentEvent[];
+  busy: boolean;
+}
+
+/** A stored chat session (persisted in MySQL on the backend). */
+export interface SessionInfo {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
   busy: boolean;
 }
 

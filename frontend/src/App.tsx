@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
-import { getFileContent, getFileTree, saveFileContent } from "./api/client";
+import {
+  createSession,
+  deleteSession,
+  getFileContent,
+  getFileTree,
+  listSessions,
+  saveFileContent,
+} from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { FileTree } from "./components/FileTree";
 import { useAgent } from "./hooks/useAgent";
-import type { EditorTab, FileNode } from "./types";
+import type { EditorTab, FileNode, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -18,9 +25,61 @@ function App() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+
+  const refreshSessions = useCallback(() => {
+    listSessions()
+      .then(setSessions)
+      .catch(() => {
+        // Backend unreachable; the connection badge already reflects it.
+      });
+  }, []);
+
+  // Load stored sessions on startup; make sure at least one exists.
+  useEffect(() => {
+    listSessions()
+      .then(async (list) => {
+        if (list.length === 0) {
+          const created = await createSession();
+          list = [created];
+        }
+        setSessions(list);
+        setActiveSessionId(list[0].id);
+      })
+      .catch((err: Error) => setNotice(`Could not load sessions: ${err.message}`));
+  }, []);
+
+  const newSession = useCallback(() => {
+    createSession()
+      .then((created) => {
+        setSessions((prev) => [created, ...prev]);
+        setActiveSessionId(created.id);
+      })
+      .catch((err: Error) => setNotice(err.message));
+  }, []);
+
+  const removeSession = useCallback(() => {
+    if (!activeSessionId) return;
+    const current = sessions.find((s) => s.id === activeSessionId);
+    if (!window.confirm(`Delete session "${current?.title ?? "this session"}"?`)) return;
+    deleteSession(activeSessionId)
+      .then(async () => {
+        const remaining = sessions.filter((s) => s.id !== activeSessionId);
+        if (remaining.length === 0) {
+          const created = await createSession();
+          setSessions([created]);
+          setActiveSessionId(created.id);
+        } else {
+          setSessions(remaining);
+          setActiveSessionId(remaining[0].id);
+        }
+      })
+      .catch((err: Error) => setNotice(err.message));
+  }, [activeSessionId, sessions]);
 
   const refreshFileTree = useCallback(() => {
     getFileTree()
@@ -54,8 +113,11 @@ function App() {
     reloadCleanTabs();
   }, [refreshFileTree, reloadCleanTabs]);
 
-  const { items, connected, busy, sendChat, respondApproval, stop, reset } =
-    useAgent(handleFilesChanged);
+  const { items, connected, busy, sendChat, respondApproval, stop, reset } = useAgent(
+    activeSessionId,
+    handleFilesChanged,
+    refreshSessions,
+  );
 
   useEffect(() => {
     refreshFileTree();
@@ -113,8 +175,33 @@ function App() {
           {connected ? "connected" : "disconnected"}
         </span>
         <div className="app__header-right">
-          <button className="app__new-chat" onClick={reset} disabled={busy}>
-            New chat
+          <select
+            className="app__session-select"
+            value={activeSessionId ?? ""}
+            onChange={(e) => setActiveSessionId(e.target.value)}
+            disabled={sessions.length === 0}
+            title="Switch session"
+          >
+            {sessions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.busy && s.id !== activeSessionId ? "● " : ""}
+                {s.title}
+              </option>
+            ))}
+          </select>
+          <button className="app__new-chat" onClick={newSession} title="Start a new session">
+            New session
+          </button>
+          <button className="app__new-chat" onClick={reset} disabled={busy} title="Clear this session's transcript">
+            Clear
+          </button>
+          <button
+            className="app__new-chat app__session-delete"
+            onClick={removeSession}
+            disabled={busy || !activeSessionId}
+            title="Delete this session"
+          >
+            Delete
           </button>
         </div>
       </header>

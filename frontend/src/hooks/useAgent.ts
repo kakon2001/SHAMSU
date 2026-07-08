@@ -86,24 +86,54 @@ function eventsToItems(
   return items;
 }
 
-export function useAgent(onFilesChanged: (paths: string[]) => void): UseAgent {
+/**
+ * Drives one backend chat session at a time. Switching `sessionId` reloads the
+ * transcript from the backend; a turn still running in another session keeps
+ * running server-side and is picked up again when you switch back.
+ */
+export function useAgent(
+  sessionId: string | null,
+  onFilesChanged: (paths: string[]) => void,
+  onSessionActivity?: () => void,
+): UseAgent {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const onFilesChangedRef = useRef(onFilesChanged);
   onFilesChangedRef.current = onFilesChanged;
-  const pumpingRef = useRef(false);
-  // Unresolved approval ids, tracked synchronously (React state flushes too late
-  // for the pump loop's stop condition).
-  const pendingIdsRef = useRef<Set<string>>(new Set());
+  const onSessionActivityRef = useRef(onSessionActivity);
+  onSessionActivityRef.current = onSessionActivity;
 
-  const trackPending = useCallback((events: AgentEvent[]) => {
-    for (const ev of events) {
-      if (ev.type === "approval_request") pendingIdsRef.current.add(ev.id);
-      else if (ev.type === "approval_resolved") pendingIdsRef.current.delete(ev.id);
+  // The session the UI is currently showing — late responses from other
+  // sessions must not touch the visible transcript.
+  const sessionRef = useRef<string | null>(sessionId);
+  sessionRef.current = sessionId;
+  // Sessions with a pump loop in flight.
+  const pumpingRef = useRef<Set<string>>(new Set());
+  // Unresolved approval ids per session, tracked synchronously (React state
+  // flushes too late for the pump loop's stop condition).
+  const pendingRef = useRef<Map<string, Set<string>>>(new Map());
+
+  const pendingOf = useCallback((sid: string): Set<string> => {
+    let set = pendingRef.current.get(sid);
+    if (!set) {
+      set = new Set();
+      pendingRef.current.set(sid, set);
     }
+    return set;
   }, []);
+
+  const trackPending = useCallback(
+    (sid: string, events: AgentEvent[]) => {
+      const set = pendingOf(sid);
+      for (const ev of events) {
+        if (ev.type === "approval_request") set.add(ev.id);
+        else if (ev.type === "approval_resolved") set.delete(ev.id);
+      }
+    },
+    [pendingOf],
+  );
 
   const apply = useCallback((events: AgentEvent[], includeUser = false) => {
     setItems((prev) =>
@@ -116,59 +146,77 @@ export function useAgent(onFilesChanged: (paths: string[]) => void): UseAgent {
     setItems((prev) => [...prev, { kind: "error", id: uid(), content: message }]);
   }, []);
 
-  // Apply a response, then keep long-polling while the agent is generating with
-  // nothing for the user to approve (e.g. after a page reload mid-turn).
+  // Apply a response, then keep long-polling while the agent is generating
+  // with nothing for the user to approve. Stops early if the user switches
+  // sessions — the backend turn keeps running without us.
   const pump = useCallback(
-    async (first: Promise<AgentResponse>, includeUser = false) => {
-      if (pumpingRef.current) return;
-      pumpingRef.current = true;
+    async (sid: string, first: Promise<AgentResponse>, includeUser = false) => {
+      if (pumpingRef.current.has(sid)) return;
+      pumpingRef.current.add(sid);
       try {
         let res = await first;
-        trackPending(res.events);
-        apply(res.events, includeUser);
-        setBusy(res.busy);
-        while (res.busy && pendingIdsRef.current.size === 0) {
-          res = await postContinue();
-          trackPending(res.events);
-          apply(res.events);
+        trackPending(sid, res.events);
+        if (sessionRef.current === sid) {
+          apply(res.events, includeUser);
           setBusy(res.busy);
         }
+        while (res.busy && pendingOf(sid).size === 0 && sessionRef.current === sid) {
+          res = await postContinue(sid);
+          trackPending(sid, res.events);
+          if (sessionRef.current === sid) {
+            apply(res.events);
+            setBusy(res.busy);
+          }
+        }
+        // Turn settled (or paused) — let the app refresh session titles/order.
+        onSessionActivityRef.current?.();
       } catch (err) {
-        fail(err);
-        setBusy(false);
+        if (sessionRef.current === sid) {
+          fail(err);
+          setBusy(false);
+        }
       } finally {
-        pumpingRef.current = false;
+        pumpingRef.current.delete(sid);
       }
     },
-    [apply, fail, trackPending],
+    [apply, fail, pendingOf, trackPending],
   );
 
+  // Load (or reload) the transcript whenever the active session changes.
   useEffect(() => {
-    getAgentState()
+    setItems([]);
+    setBusy(false);
+    if (!sessionId) return;
+    getAgentState(sessionId)
       .then((res) => {
+        if (sessionRef.current !== sessionId) return;
         setConnected(true);
-        setItems([]);
-        pendingIdsRef.current = new Set();
-        trackPending(res.events);
+        pendingRef.current.set(sessionId, new Set());
+        trackPending(sessionId, res.events);
         apply(res.events, true);
         setBusy(res.busy);
-        if (res.busy) void pump(Promise.resolve({ events: [], busy: res.busy }));
+        if (res.busy && pendingOf(sessionId).size === 0)
+          void pump(sessionId, Promise.resolve({ events: [], busy: res.busy }));
       })
       .catch(() => setConnected(false));
-  }, [apply, pump, trackPending]);
+  }, [sessionId, apply, pump, pendingOf, trackPending]);
 
   const sendChat = useCallback(
     (content: string, contextFiles: string[] = []) => {
+      const sid = sessionRef.current;
+      if (!sid) return;
       setItems((prev) => [...prev, { kind: "user", id: uid(), content, contextFiles }]);
-      void pump(postChat(content, contextFiles));
+      void pump(sid, postChat(sid, content, contextFiles));
     },
     [pump],
   );
 
   const respondApproval = useCallback(
     (id: string, approved: boolean) => {
+      const sid = sessionRef.current;
+      if (!sid) return;
       // Mark resolved immediately so the pump doesn't see a stale pending card.
-      pendingIdsRef.current.delete(id);
+      pendingOf(sid).delete(id);
       setItems((prev) =>
         prev.map((it) =>
           it.kind === "approval" && it.id === id
@@ -176,26 +224,34 @@ export function useAgent(onFilesChanged: (paths: string[]) => void): UseAgent {
             : it,
         ),
       );
-      void pump(postApproval(id, approved));
+      void pump(sid, postApproval(sid, id, approved));
     },
-    [pump],
+    [pump, pendingOf],
   );
 
   const stop = useCallback(() => {
-    postStop()
+    const sid = sessionRef.current;
+    if (!sid) return;
+    postStop(sid)
       .then((res) => {
+        if (sessionRef.current !== sid) return;
         apply(res.events);
         setBusy(res.busy);
+        onSessionActivityRef.current?.();
       })
       .catch(fail);
   }, [apply, fail]);
 
   const reset = useCallback(() => {
-    postReset()
+    const sid = sessionRef.current;
+    if (!sid) return;
+    postReset(sid)
       .then(() => {
+        if (sessionRef.current !== sid) return;
         setItems([]);
         setBusy(false);
-        pendingIdsRef.current = new Set();
+        pendingRef.current.set(sid, new Set());
+        onSessionActivityRef.current?.();
       })
       .catch(fail);
   }, [fail]);

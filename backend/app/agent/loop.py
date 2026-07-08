@@ -1,27 +1,39 @@
-"""HTTP-driven agent session.
+"""HTTP-driven agent sessions.
 
-A single global AgentSession runs turns as background asyncio tasks and
-records everything that happens as an ordered list of events. HTTP handlers
-start/resume the turn and then wait until the agent either finishes or pauses
-on a mutating tool (write_file / run_shell) that needs user approval; the
-response carries all events produced since the last request. Approving or
-rejecting resumes the loop with the real result (or the rejection),
-so the agent can edit a file, run the tests, and react to failures within a
-single turn — no WebSocket required.
+Each AgentSession (one per chat session, managed by session_manager) runs
+turns as background asyncio tasks and records everything that happens as an
+ordered list of events. HTTP handlers start/resume the turn and then wait
+until the agent either finishes or pauses on a mutating tool (write_file /
+run_shell) that needs user approval; the response carries all events produced
+since the last request. Approving or rejecting resumes the loop with the real
+result (or the rejection), so the agent can edit a file, run the tests, and
+react to failures within a single turn — no WebSocket required.
+
+Sessions are persisted to MySQL (see app.db) at every turn end, so the full
+transcript and conversation survive a backend restart.
 """
 
 import asyncio
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import ollama
 
+from .. import db
 from ..config import settings
 from .prompts import SYSTEM_PROMPT
 from . import tools
 from .tools import MUTATING_TOOLS, TOOL_NAMES, TOOL_SCHEMAS
+
+DEFAULT_TITLE = "New chat"
+
+
+def _utcnow() -> datetime:
+    # Naive UTC — MySQL DATETIME has no timezone.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # qwen-class small models sometimes emit tool calls as loose JSON in the content instead of the
@@ -92,10 +104,28 @@ class TurnStopped(Exception):
 
 
 class AgentSession:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session_id: Optional[str] = None,
+        title: str = DEFAULT_TITLE,
+        created_at: Optional[datetime] = None,
+        updated_at: Optional[datetime] = None,
+        conversation: Optional[list[dict[str, Any]]] = None,
+        events: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        now = _utcnow()
+        self.id = session_id or uuid.uuid4().hex
+        self.title = title
+        self.created_at = created_at or now
+        self.updated_at = updated_at or now
         self._client = ollama.AsyncClient(host=settings.ollama_host)
-        self.conversation: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        self.events: list[dict[str, Any]] = []
+        self.conversation: list[dict[str, Any]] = conversation or [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
+        # Hydrated sessions keep their history but should follow the current prompt.
+        if self.conversation and self.conversation[0].get("role") == "system":
+            self.conversation[0] = {"role": "system", "content": SYSTEM_PROMPT}
+        self.events: list[dict[str, Any]] = events or []
         self._delivered = 0  # index of the first event not yet sent to the client
         self._changed = asyncio.Event()
         self._pending_approvals: dict[str, asyncio.Future] = {}
@@ -104,9 +134,25 @@ class AgentSession:
         self._last_file_path: Optional[str] = None
         self.busy = False
 
+    def info(self) -> dict[str, Any]:
+        """Metadata for session lists — no transcript payload."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "busy": self.busy,
+        }
+
+    async def persist(self) -> None:
+        await db.save_session(
+            self.id, self.title, self.conversation, self.events, self.created_at, self.updated_at
+        )
+
     # ------------------------------------------------------------ event log
 
     def _emit(self, event: dict[str, Any]) -> None:
+        event.setdefault("timestamp", _utcnow().isoformat())
         self.events.append(event)
         self._changed.set()
 
@@ -136,6 +182,10 @@ class AgentSession:
     def start_turn(self, user_message: str, context_files: Optional[list[str]] = None) -> None:
         if self.busy:
             raise RuntimeError("Agent is busy with the current turn")
+        if self.title == DEFAULT_TITLE:
+            # Name the session after its first request so the session list is readable.
+            title = " ".join(user_message.split())
+            self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
         self._turn_task = asyncio.create_task(self._run_turn(user_message, context_files or []))
@@ -160,6 +210,7 @@ class AgentSession:
         self.events = []
         self._delivered = 0
         self._last_file_path = None
+        self.updated_at = _utcnow()
 
     # ----------------------------------------------------------------- turn
 
@@ -180,7 +231,11 @@ class AgentSession:
             self._emit({"type": "error", "message": f"Agent error: {exc}"})
         finally:
             self.busy = False
+            self.updated_at = _utcnow()
             self._emit({"type": "turn_end"})
+            # Persist once per turn: pending approvals are always resolved by now,
+            # so the stored transcript never contains a dangling approval card.
+            await self.persist()
 
     def _with_file_context(self, user_message: str, context_files: list[str]) -> str:
         """Inline attached workspace files above the user's message so the model sees them
@@ -385,7 +440,3 @@ def _preview_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
         content = args.get("content") or ""
         return {"path": args.get("path"), "content": f"<{len(content)} chars>"}
     return args
-
-
-# Single-user personal tool: one global session shared by all HTTP handlers.
-session = AgentSession()

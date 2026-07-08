@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode } from "../types";
+import type { AgentResponse, FileContent, FileNode, SessionInfo } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -18,30 +18,64 @@ function post<T>(url: string, body?: unknown): Promise<T> {
   }).then((res) => handle<T>(res));
 }
 
+// ---------------------------------------------------------------- sessions
+
+export function listSessions(): Promise<SessionInfo[]> {
+  return fetch(`${API_BASE}/api/sessions`).then((res) => handle<SessionInfo[]>(res));
+}
+
+export function createSession(title?: string): Promise<SessionInfo> {
+  return post("/api/sessions", { title });
+}
+
+export function renameSession(sessionId: string, title: string): Promise<SessionInfo> {
+  return fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  }).then((res) => handle<SessionInfo>(res));
+}
+
+export function deleteSession(sessionId: string): Promise<{ ok: boolean }> {
+  return fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" }).then((res) =>
+    handle<{ ok: boolean }>(res),
+  );
+}
+
 // ------------------------------------------------------------------- agent
 
-export function getAgentState(): Promise<AgentResponse> {
-  return fetch(`${API_BASE}/api/agent/state`).then((res) => handle<AgentResponse>(res));
+export function getAgentState(sessionId: string): Promise<AgentResponse> {
+  return fetch(`${API_BASE}/api/sessions/${sessionId}/state`).then((res) =>
+    handle<AgentResponse>(res),
+  );
 }
 
-export function postChat(message: string, contextFiles: string[] = []): Promise<AgentResponse> {
-  return post("/api/agent/chat", { message, context_files: contextFiles });
+export function postChat(
+  sessionId: string,
+  message: string,
+  contextFiles: string[] = [],
+): Promise<AgentResponse> {
+  return post(`/api/sessions/${sessionId}/chat`, { message, context_files: contextFiles });
 }
 
-export function postApproval(id: string, approved: boolean): Promise<AgentResponse> {
-  return post("/api/agent/approval", { id, approved });
+export function postApproval(
+  sessionId: string,
+  id: string,
+  approved: boolean,
+): Promise<AgentResponse> {
+  return post(`/api/sessions/${sessionId}/approval`, { id, approved });
 }
 
-export function postContinue(): Promise<AgentResponse> {
-  return post("/api/agent/continue");
+export function postContinue(sessionId: string): Promise<AgentResponse> {
+  return post(`/api/sessions/${sessionId}/continue`);
 }
 
-export function postStop(): Promise<AgentResponse> {
-  return post("/api/agent/stop");
+export function postStop(sessionId: string): Promise<AgentResponse> {
+  return post(`/api/sessions/${sessionId}/stop`);
 }
 
-export function postReset(): Promise<AgentResponse> {
-  return post("/api/agent/reset");
+export function postReset(sessionId: string): Promise<AgentResponse> {
+  return post(`/api/sessions/${sessionId}/reset`);
 }
 
 // ------------------------------------------------------------------- files

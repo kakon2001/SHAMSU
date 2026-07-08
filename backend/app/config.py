@@ -8,8 +8,14 @@ class Settings(BaseSettings):
 
     agent_workdir: str = "../workspace"
     ollama_host: str = "http://localhost:11434"
-    model_name: str = "qwen2.5-coder:7b"
+    model_name: str = "qwen3:8b"
     frontend_origin: str = "http://localhost:5173"
+
+    mysql_host: str = "localhost"
+    mysql_port: int = 3306
+    mysql_user: str = "root"
+    mysql_password: str = ""
+    mysql_database: str = "coding_agent"
 
     max_tool_iterations: int = 16
     shell_timeout_seconds: int = 120

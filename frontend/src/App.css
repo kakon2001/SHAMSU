@@ -53,6 +53,20 @@
   color: var(--text-h);
 }
 
+.app__session-select {
+  max-width: 260px;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.app__session-delete:not(:disabled) {
+  color: var(--remove-text);
+}
+
 .app__notice {
   padding: 6px 14px;
   font-size: 13px;
@@ -226,6 +240,43 @@
   border-left: 1px solid var(--border);
   background: var(--panel-bg);
   min-height: 0;
+}
+
+.activity-history {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.activity-history summary {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text-h);
+}
+
+.activity-history__counts {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.activity-history__list {
+  display: grid;
+  gap: 4px;
+  max-height: 140px;
+  overflow: auto;
+  padding: 0 10px 8px;
+  color: var(--text);
+}
+
+.activity-history__list div,
+.activity-history__empty {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-panel__messages {
