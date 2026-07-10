@@ -10,7 +10,6 @@ import {
 } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
-import { FileTree } from "./components/FileTree";
 import { useAgent } from "./hooks/useAgent";
 import type { EditorTab, FileNode, SessionInfo } from "./types";
 
@@ -167,6 +166,8 @@ function App() {
     [refreshFileTree],
   );
 
+  const workspaceFiles = flattenFiles(fileTree);
+
   return (
     <div className="app">
       <header className="app__header">
@@ -174,7 +175,17 @@ function App() {
         <span className={`app__status app__status--${connected ? "on" : "off"}`}>
           {connected ? "connected" : "disconnected"}
         </span>
-        <div className="app__header-right">
+      </header>
+
+      {notice && (
+        <div className="app__notice" onClick={() => setNotice(null)} title="Click to dismiss">
+          {notice}
+        </div>
+      )}
+
+      <div className="app__body">
+        <section className="chat-shell">
+          <div className="chat-shell__toolbar">
           <select
             className="app__session-select"
             value={activeSessionId ?? ""}
@@ -203,40 +214,49 @@ function App() {
           >
             Delete
           </button>
-        </div>
-      </header>
-
-      {notice && (
-        <div className="app__notice" onClick={() => setNotice(null)} title="Click to dismiss">
-          {notice}
-        </div>
-      )}
-
-      <div className="app__body">
-        <FileTree
-          root={fileTree}
-          activePath={activePath}
-          onOpenFile={openFile}
-          onRefresh={refreshFileTree}
-        />
-        <EditorPane
-          tabs={tabs}
-          activePath={activePath}
-          onSelect={setActivePath}
-          onClose={closeTab}
-          onChange={changeTab}
-          onSave={saveTab}
-        />
-        <ChatPanel
-          items={items}
-          busy={busy}
-          connected={connected}
-          files={flattenFiles(fileTree)}
-          activePath={activePath}
-          onSend={sendChat}
-          onStop={stop}
-          onRespondApproval={respondApproval}
-        />
+          </div>
+          <ChatPanel
+            items={items}
+            busy={busy}
+            connected={connected}
+            files={workspaceFiles}
+            activePath={activePath}
+            onSend={sendChat}
+            onStop={stop}
+            onRespondApproval={respondApproval}
+          />
+        </section>
+        <section className="workspace-panel">
+          <div className="workspace-panel__toolbar">
+            <select
+              className="workspace-panel__select"
+              value={activePath ?? ""}
+              onChange={(e) => {
+                if (e.target.value) openFile(e.target.value);
+              }}
+              disabled={workspaceFiles.length === 0}
+              title="Open workspace file"
+            >
+              <option value="">Open workspace file</option>
+              {workspaceFiles.map((path) => (
+                <option key={path} value={path}>
+                  {path}
+                </option>
+              ))}
+            </select>
+            <button className="workspace-panel__refresh" onClick={refreshFileTree}>
+              Refresh
+            </button>
+          </div>
+          <EditorPane
+            tabs={tabs}
+            activePath={activePath}
+            onSelect={setActivePath}
+            onClose={closeTab}
+            onChange={changeTab}
+            onSave={saveTab}
+          />
+        </section>
       </div>
     </div>
   );
