@@ -124,8 +124,7 @@ export function EditorPane({ tabs, activePath, onSelect, onClose, onChange, onSa
           />
         ) : (
           <div className="editor-pane__empty">
-            Open a file from the tree to view or edit it. Agent edits show up here after you approve
-            them.
+            Open a workspace file to view or edit it. Agent edits show up here after you approve them.
           </div>
         )}
       </div>
