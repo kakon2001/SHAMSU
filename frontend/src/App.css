@@ -79,9 +79,33 @@
 
 .app__body {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr) 400px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
+}
+
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+
+.chat-shell__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+
+.chat-shell__toolbar .app__session-select {
+  flex: 1 1 220px;
+  max-width: none;
 }
 
 /* ---------------------------------------------------------- file tree */
@@ -163,6 +187,44 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  flex: 1;
+}
+
+.workspace-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.workspace-panel__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+
+.workspace-panel__select {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.workspace-panel__refresh {
+  font-size: 13px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
 }
 
 .editor-pane__tabs {
@@ -237,9 +299,21 @@
 .chat-panel {
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border);
   background: var(--panel-bg);
   min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 900px) {
+  .app__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(360px, 45vh) minmax(0, 1fr);
+  }
+
+  .chat-shell {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
 }
 
 .activity-history {
