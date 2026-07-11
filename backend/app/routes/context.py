@@ -26,3 +26,11 @@ async def context_search(query: str = Query(...), limit: int = Query(5, ge=1, le
             for match in matches
         ],
     }
+
+
+@router.get("/auto")
+async def automatic_context(query: str = Query(...), limit: int = Query(6, ge=1, le=20)) -> dict[str, object]:
+    return {
+        "query": query,
+        "context": context_index.automatic_context(query, limit=limit),
+    }

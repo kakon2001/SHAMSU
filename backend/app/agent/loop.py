@@ -1,4 +1,4 @@
-"""HTTP-driven agent sessions.
+﻿"""HTTP-driven agent sessions.
 
 Each AgentSession (one per chat session, managed by session_manager) runs
 turns as background asyncio tasks and records everything that happens as an
@@ -7,7 +7,7 @@ until the agent either finishes or pauses on a mutating tool (write_file /
 run_shell) that needs user approval; the response carries all events produced
 since the last request. Approving or rejecting resumes the loop with the real
 result (or the rejection), so the agent can edit a file, run the tests, and
-react to failures within a single turn — no WebSocket required.
+react to failures within a single turn â€” no WebSocket required.
 
 Sessions are persisted to MySQL (see app.db) at every turn end, so the full
 transcript and conversation survive a backend restart.
@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import ollama
 
-from .. import db
+from .. import context_index, db
 from ..config import settings
 from .prompts import SYSTEM_PROMPT
 from . import tools
@@ -34,7 +34,7 @@ activity_log = logging.getLogger("agent.activity")
 
 
 def _utcnow() -> datetime:
-    # Naive UTC — MySQL DATETIME has no timezone.
+    # Naive UTC â€” MySQL DATETIME has no timezone.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -139,7 +139,7 @@ class AgentSession:
         self.busy = False
 
     def info(self) -> dict[str, Any]:
-        """Metadata for session lists — no transcript payload."""
+        """Metadata for session lists â€” no transcript payload."""
         return {
             "id": self.id,
             "title": self.title,
@@ -195,7 +195,7 @@ class AgentSession:
         if self.title == DEFAULT_TITLE:
             # Name the session after its first request so the session list is readable.
             title = " ".join(user_message.split())
-            self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
+            self.title = title[:57] + "â€¦" if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
         self._tools_enabled = _should_enable_tools(user_message, context_files or [])
@@ -250,8 +250,13 @@ class AgentSession:
 
     def _with_file_context(self, user_message: str, context_files: list[str]) -> str:
         """Inline attached workspace files above the user's message so the model sees them
-        without having to call read_file. Kept small — local models have tight contexts."""
-        if not context_files:
+        without having to call read_file. Kept small â€” local models have tight contexts."""
+        auto_context = (
+            context_index.automatic_context(user_message)
+            if not context_files or _wants_workspace_context(user_message)
+            else ""
+        )
+        if not context_files and not auto_context:
             return user_message
         blocks = []
         for path in context_files[:5]:
@@ -260,11 +265,17 @@ class AgentSession:
                 content = content[: settings.max_tool_output_chars] + "\n... [truncated]"
             self._last_file_path = path
             blocks.append(f"--- {path} ---\n{content}")
-        return (
-            "The user attached the following workspace file(s) as context:\n\n"
-            + "\n\n".join(blocks)
-            + f"\n\nUser request: {user_message}"
-        )
+        parts = []
+        if blocks:
+            parts.append(
+                "The user attached the following local file(s) as context. If the user says "
+                "'this file', 'the uploaded file', or asks what the file says, answer from these "
+                "attached file contents and do not substitute another workspace file:\n\n"
+                + "\n\n".join(blocks)
+            )
+        if auto_context:
+            parts.append("Relevant indexed workspace/upload context:\n\n" + auto_context)
+        return "\n\n".join(parts) + f"\n\nUser request: {user_message}"
 
     async def _run_loop(self) -> None:
         for _ in range(settings.max_tool_iterations):
@@ -308,7 +319,7 @@ class AgentSession:
         self._emit(
             {
                 "type": "assistant_message",
-                "content": "I hit the tool-call limit for this turn without finishing — "
+                "content": "I hit the tool-call limit for this turn without finishing â€” "
                 "ask again or break the request into smaller steps.",
             }
         )
@@ -445,7 +456,7 @@ class AgentSession:
         if not approved:
             return (
                 f"The user REJECTED this {name} call; it was not executed. Do not repeat the "
-                f"same call unchanged — try a different approach or ask the user how to proceed."
+                f"same call unchanged â€” try a different approach or ask the user how to proceed."
             )
 
         if name == "run_shell":
@@ -504,7 +515,7 @@ def _preview_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
     if context_files:
-        return True
+        return _wants_mutating_tools(user_message) or _wants_workspace_context(user_message)
     text = user_message.lower()
     keywords = {
         "file",
@@ -531,3 +542,42 @@ def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
         "project",
     }
     return any(keyword in text for keyword in keywords)
+def _wants_mutating_tools(user_message: str) -> bool:
+    text = user_message.lower()
+    keywords = {
+        "edit",
+        "change",
+        "write",
+        "create",
+        "delete",
+        "save",
+        "run",
+        "test",
+        "fix",
+        "execute",
+        "rename",
+        "move",
+        "apply",
+    }
+    return any(keyword in text for keyword in keywords)
+
+
+def _wants_workspace_context(user_message: str) -> bool:
+    text = user_message.lower()
+    workspace_keywords = {
+        "workspace",
+        "project",
+        "repo",
+        "repository",
+        "codebase",
+        "folder",
+        "directory",
+        "all files",
+        "other files",
+        "compare",
+        "search",
+        "find in",
+    }
+    return any(keyword in text for keyword in workspace_keywords)
+
+
