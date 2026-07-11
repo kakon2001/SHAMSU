@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db
 from .agent.session_manager import manager
 from .config import settings
-from .routes import agent, context, files
+from .routes import agent, context, files, uploads
 
 
 def configure_activity_logging() -> None:
@@ -46,6 +46,7 @@ app.add_middleware(
 app.include_router(agent.router)
 app.include_router(context.router)
 app.include_router(files.router)
+app.include_router(uploads.router)
 
 
 @app.get("/api/health")
