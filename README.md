@@ -9,9 +9,10 @@ This project is a local Claude-style coding agent with a FastAPI backend and Rea
 - FastAPI backend.
 - React + TypeScript frontend.
 - Command-line client for terminal usage.
-- Workspace file tree and Monaco editor.
+- Claude-style chat/editor layout with Monaco editor.
 - Agent tools for listing, reading, searching, writing files, and running shell commands.
-- Basic context handler for chunking and searching workspace files.
+- Context handler for chunking, summarizing, and searching workspace/uploaded files.
+- External PDF/text upload that converts documents into local searchable context.
 - Minimal stdio MCP-style server for safe workspace tools.
 - Cross-platform shell command runner foundation.
 - Approval flow for file edits and shell commands.
@@ -115,14 +116,32 @@ If MySQL is not running, the backend automatically stores sessions in `sessions.
 
 ## Context API
 
-The context handler chunks workspace text files and searches relevant snippets.
+The context handler chunks workspace text files, summarizes indexed files, and searches relevant snippets. Uploaded PDF/text files are extracted into local text files under `workspace/uploads/`, which is ignored by Git.
 
 ```text
 GET /api/context/summary
 GET /api/context/search?query=calculator
+GET /api/context/auto?query=calculator
 ```
 
-The agent can also call `search_context` when it needs broad project context.
+The agent automatically injects a small relevant context pack into each prompt. It can also call `search_context` when it needs broader project context.
+
+## External File Upload
+
+The web chat has an `Upload` button for PDFs and text/code files. After upload, the backend extracts readable text, saves it locally as `workspace/uploads/...txt`, attaches that file to the next prompt, and refreshes the editor file list.
+
+Supported upload examples:
+
+- `.pdf`
+- `.txt`, `.md`, `.csv`, `.json`
+- `.py`, `.js`, `.ts`, `.tsx`
+- `.html`, `.css`, `.yaml`, `.yml`, `.log`
+
+Upload API:
+
+```text
+POST /api/uploads
+```
 
 ## CLI
 
@@ -141,7 +160,7 @@ If the agent asks to edit a file or run a shell command, the CLI prints the comm
 
 ## Harness
 
-The basic harness is implemented in `backend/harness.py`. It checks backend health, active model reporting, history storage, session creation, activity history, CLI availability, and session deletion.
+The basic harness is implemented in `backend/harness.py`. It checks backend health, active model reporting, history storage, session creation, activity history, context summary, automatic context retrieval, external upload, CLI availability, and session deletion.
 
 ## MCP Server
 

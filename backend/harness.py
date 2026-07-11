@@ -32,6 +32,25 @@ def request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         return json.loads(text) if text else None
 
 
+def upload_text_file(path: str, filename: str, content: str) -> Any:
+    boundary = "----coding-agent-harness"
+    payload = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: text/plain\r\n\r\n"
+        f"{content}\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        API_BASE + path,
+        data=payload,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def check(name: str, passed: bool, detail: str = "") -> bool:
     status = "PASS" if passed else "FAIL"
     suffix = f" - {detail}" if detail else ""
@@ -61,6 +80,19 @@ def main() -> int:
 
     activity = request("GET", f"/api/sessions/{session_id}/activity")
     results.append(check("activity endpoint", activity.get("session_id") == session_id))
+
+    summary = request("GET", "/api/context/summary")
+    results.append(check("context summary endpoint", "chunk_count" in summary))
+
+    auto = request("GET", "/api/context/auto?query=calculator")
+    results.append(check("automatic context endpoint", "context" in auto))
+
+    upload = upload_text_file(
+        "/api/uploads",
+        "harness-notes.txt",
+        "Harness upload proves external text files become searchable local context.",
+    )
+    results.append(check("external upload endpoint", str(upload.get("path", "")).startswith("uploads/")))
 
     cli_path = Path(__file__).with_name("cli.py")
     results.append(check("cli.py exists", cli_path.exists(), str(cli_path)))
