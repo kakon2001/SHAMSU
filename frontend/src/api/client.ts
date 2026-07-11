@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode, SessionInfo } from "../types";
+import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -96,4 +96,15 @@ export function saveFileContent(path: string, content: string): Promise<FileCont
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, content }),
   }).then((res) => handle<FileContent>(res));
+}
+
+// ----------------------------------------------------------------- uploads
+
+export function uploadContextFile(file: File): Promise<UploadedContextFile> {
+  const body = new FormData();
+  body.append("file", file);
+  return fetch(`${API_BASE}/api/uploads`, {
+    method: "POST",
+    body,
+  }).then((res) => handle<UploadedContextFile>(res));
 }

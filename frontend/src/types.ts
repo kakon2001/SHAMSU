@@ -10,6 +10,13 @@ export interface FileContent {
   content: string;
 }
 
+export interface UploadedContextFile {
+  name: string;
+  path: string;
+  chars: number;
+  kind: "pdf" | "text";
+}
+
 /** Events recorded by the backend agent session. */
 export type AgentEvent =
   | { type: "user_message"; content: string; context_files?: string[]; timestamp?: string }
