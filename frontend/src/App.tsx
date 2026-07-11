@@ -224,6 +224,7 @@ function App() {
             onSend={sendChat}
             onStop={stop}
             onRespondApproval={respondApproval}
+            onUploaded={refreshFileTree}
           />
         </section>
         <section className="workspace-panel">

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { uploadContextFile } from "../api/client";
 import type { ChatItem } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
@@ -13,6 +14,7 @@ interface Props {
   onSend: (text: string, contextFiles: string[]) => void;
   onStop: () => void;
   onRespondApproval: (id: string, approved: boolean) => void;
+  onUploaded?: () => void;
 }
 
 export function ChatPanel({
@@ -24,13 +26,18 @@ export function ChatPanel({
   onSend,
   onStop,
   onRespondApproval,
+  onUploaded,
 }: Props) {
   const [input, setInput] = useState("");
   const [attached, setAttached] = useState<string[]>([]);
+  const [attachmentLabels, setAttachmentLabels] = useState<Record<string, string>>({});
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -55,12 +62,30 @@ export function ChatPanel({
     onSend(text, attached);
     setInput("");
     setAttached([]);
+    setAttachmentLabels({});
   }
 
   function attach(path: string) {
     setAttached((prev) => (prev.includes(path) ? prev : [...prev, path]));
     setPickerOpen(false);
     setFilter("");
+  }
+
+  async function handleUpload(file: File | undefined) {
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const uploaded = await uploadContextFile(file);
+      setAttachmentLabels((prev) => ({ ...prev, [uploaded.path]: uploaded.name }));
+      attach(uploaded.path);
+      onUploaded?.();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+      if (uploadRef.current) uploadRef.current.value = "";
+    }
   }
 
   const hasPendingApproval = items.some((it) => it.kind === "approval" && it.status === "pending");
@@ -149,11 +174,18 @@ export function ChatPanel({
         <div className="chat-panel__chips">
           {attached.map((path) => (
             <span key={path} className="context-chip" title={path}>
-              {path.split("/").pop()}
+              {attachmentLabels[path] ?? path.split("/").pop()}
               <button
                 type="button"
                 className="context-chip__remove"
-                onClick={() => setAttached((prev) => prev.filter((p) => p !== path))}
+                onClick={() => {
+                  setAttached((prev) => prev.filter((p) => p !== path));
+                  setAttachmentLabels((prev) => {
+                    const next = { ...prev };
+                    delete next[path];
+                    return next;
+                  });
+                }}
               >
                 ×
               </button>
@@ -161,6 +193,7 @@ export function ChatPanel({
           ))}
         </div>
       )}
+      {uploadError && <div className="chat-panel__upload-error">{uploadError}</div>}
 
       <form className="chat-panel__input" onSubmit={handleSubmit}>
         <div className="chat-panel__plus-wrap" ref={pickerRef}>
@@ -200,6 +233,22 @@ export function ChatPanel({
             </div>
           )}
         </div>
+        <input
+          ref={uploadRef}
+          type="file"
+          className="chat-panel__upload-input"
+          accept=".pdf,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.yaml,.yml,.log"
+          onChange={(e) => void handleUpload(e.target.files?.[0])}
+        />
+        <button
+          type="button"
+          className="btn"
+          disabled={!connected || busy || uploading}
+          onClick={() => uploadRef.current?.click()}
+          title="Upload a PDF or text file as context"
+        >
+          {uploading ? "Uploading" : "Upload"}
+        </button>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
