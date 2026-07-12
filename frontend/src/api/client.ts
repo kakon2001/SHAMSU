@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -81,7 +81,7 @@ export function postReset(sessionId: string): Promise<AgentResponse> {
 // ------------------------------------------------------------------- files
 
 export function getFileTree(): Promise<FileNode> {
-  return fetch(`${API_BASE}/api/files`).then((res) => handle<FileNode>(res));
+  return fetch(`${API_BASE}/api/files`, { cache: "no-store" }).then((res) => handle<FileNode>(res));
 }
 
 export function getFileContent(path: string): Promise<FileContent> {
@@ -108,3 +108,5 @@ export function uploadContextFile(file: File): Promise<UploadedContextFile> {
     body,
   }).then((res) => handle<UploadedContextFile>(res));
 }
+
+

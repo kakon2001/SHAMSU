@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import {
   createSession,
@@ -24,6 +24,7 @@ function App() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshingFiles, setRefreshingFiles] = useState(false);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
@@ -80,10 +81,15 @@ function App() {
       .catch((err: Error) => setNotice(err.message));
   }, [activeSessionId, sessions]);
 
-  const refreshFileTree = useCallback(() => {
-    getFileTree()
-      .then(setFileTree)
-      .catch((err: Error) => setNotice(err.message));
+  const refreshFileTree = useCallback((showNotice = false) => {
+    setRefreshingFiles(true);
+    return getFileTree()
+      .then((tree) => {
+        setFileTree(tree);
+        if (showNotice) setNotice("Workspace files refreshed.");
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setRefreshingFiles(false));
   }, []);
 
   // Reload open tabs that the agent (or a shell command) may have rewritten on disk.
@@ -108,7 +114,7 @@ function App() {
   }, []);
 
   const handleFilesChanged = useCallback(() => {
-    refreshFileTree();
+    void refreshFileTree();
     reloadCleanTabs();
   }, [refreshFileTree, reloadCleanTabs]);
 
@@ -119,7 +125,7 @@ function App() {
   );
 
   useEffect(() => {
-    refreshFileTree();
+    void refreshFileTree();
   }, [refreshFileTree]);
 
   const openFile = useCallback((path: string) => {
@@ -159,7 +165,7 @@ function App() {
           setTabs((prev) =>
             prev.map((t) => (t.path === path ? { ...t, savedContent: t.content } : t)),
           );
-          refreshFileTree();
+          void refreshFileTree();
         })
         .catch((err: Error) => setNotice(err.message));
     },
@@ -195,7 +201,7 @@ function App() {
           >
             {sessions.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.busy && s.id !== activeSessionId ? "● " : ""}
+                {s.busy && s.id !== activeSessionId ? "â— " : ""}
                 {s.title}
               </option>
             ))}
@@ -224,7 +230,7 @@ function App() {
             onSend={sendChat}
             onStop={stop}
             onRespondApproval={respondApproval}
-            onUploaded={refreshFileTree}
+            onUploaded={() => void refreshFileTree(true)}
           />
         </section>
         <section className="workspace-panel">
@@ -245,8 +251,15 @@ function App() {
                 </option>
               ))}
             </select>
-            <button className="workspace-panel__refresh" onClick={refreshFileTree}>
-              Refresh
+            <button
+              className="workspace-panel__refresh"
+              onClick={() => {
+                void refreshFileTree(true);
+                reloadCleanTabs();
+              }}
+              disabled={refreshingFiles}
+            >
+              {refreshingFiles ? "Refreshing" : "Refresh"}
             </button>
           </div>
           <EditorPane
@@ -264,3 +277,5 @@ function App() {
 }
 
 export default App;
+
+
