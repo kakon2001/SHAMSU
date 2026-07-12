@@ -1,4 +1,4 @@
-.app {
+﻿.app {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -410,15 +410,29 @@
   color: #fff;
 }
 
+.chat-panel__input button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .chat-panel__upload-input {
   display: none;
 }
 
-.chat-panel__upload-error {
+.chat-panel__upload-status {
   font-size: 12px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-panel__upload-status--success {
+  color: var(--add-text);
+  background: var(--add-bg);
+}
+
+.chat-panel__upload-status--error {
   color: var(--remove-text);
   background: var(--remove-bg);
-  padding: 6px 10px;
 }
 
 /* ------------------------------------------- context attachments (+) */
@@ -435,6 +449,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
   font-size: 12px;
   font-family: var(--mono);
   padding: 2px 8px;
@@ -442,6 +457,9 @@
   background: var(--accent-bg);
   color: var(--accent);
   border: 1px solid var(--accent-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-chip--static {
@@ -789,3 +807,4 @@
   color: var(--remove-text);
   border: none;
 }
+

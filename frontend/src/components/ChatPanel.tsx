@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+﻿import { useEffect, useRef, useState, type FormEvent } from "react";
 import { uploadContextFile } from "../api/client";
 import type { ChatItem } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -34,7 +34,7 @@ export function ChatPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -74,14 +74,18 @@ export function ChatPanel({
   async function handleUpload(file: File | undefined) {
     if (!file) return;
     setUploading(true);
-    setUploadError(null);
+    setUploadStatus(null);
     try {
       const uploaded = await uploadContextFile(file);
       setAttachmentLabels((prev) => ({ ...prev, [uploaded.path]: uploaded.name }));
       attach(uploaded.path);
+      setUploadStatus({
+        kind: "success",
+        text: `Attached ${uploaded.name} (${uploaded.chars.toLocaleString()} chars extracted).`,
+      });
       onUploaded?.();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+      setUploadStatus({ kind: "error", text: err instanceof Error ? err.message : "Upload failed." });
     } finally {
       setUploading(false);
       if (uploadRef.current) uploadRef.current.value = "";
@@ -101,7 +105,7 @@ export function ChatPanel({
   const filtered = filter
     ? pickable.filter((f) => f.toLowerCase().includes(filter.toLowerCase()))
     : pickable;
-  // Surface the file open in the editor at the top — "add this file" is the common case.
+  // Surface the file open in the editor at the top â€” "add this file" is the common case.
   const ordered = activePath && filtered.includes(activePath)
     ? [activePath, ...filtered.filter((f) => f !== activePath)]
     : filtered;
@@ -164,9 +168,9 @@ export function ChatPanel({
               );
           }
         })}
-        {busy && !hasPendingApproval && <div className="chat-panel__typing">Agent is working…</div>}
+        {busy && !hasPendingApproval && <div className="chat-panel__typing">Agent is workingâ€¦</div>}
         {hasPendingApproval && (
-          <div className="chat-panel__waiting">Waiting for your approval above ↑</div>
+          <div className="chat-panel__waiting">Waiting for your approval above â†‘</div>
         )}
       </div>
 
@@ -174,7 +178,7 @@ export function ChatPanel({
         <div className="chat-panel__chips">
           {attached.map((path) => (
             <span key={path} className="context-chip" title={path}>
-              {attachmentLabels[path] ?? path.split("/").pop()}
+              {attachmentLabels[path] ? `Uploaded: ${attachmentLabels[path]}` : path.split("/").pop()}
               <button
                 type="button"
                 className="context-chip__remove"
@@ -187,13 +191,17 @@ export function ChatPanel({
                   });
                 }}
               >
-                ×
+                Ã—
               </button>
             </span>
           ))}
         </div>
       )}
-      {uploadError && <div className="chat-panel__upload-error">{uploadError}</div>}
+      {uploadStatus && (
+        <div className={`chat-panel__upload-status chat-panel__upload-status--${uploadStatus.kind}`}>
+          {uploadStatus.text}
+        </div>
+      )}
 
       <form className="chat-panel__input" onSubmit={handleSubmit}>
         <div className="chat-panel__plus-wrap" ref={pickerRef}>
@@ -213,7 +221,7 @@ export function ChatPanel({
                 className="file-picker__filter"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter files…"
+                placeholder="Filter filesâ€¦"
               />
               <div className="file-picker__list">
                 {ordered.length === 0 && <div className="file-picker__empty">No files.</div>}
@@ -246,13 +254,14 @@ export function ChatPanel({
           disabled={!connected || busy || uploading}
           onClick={() => uploadRef.current?.click()}
           title="Upload a PDF or text file as context"
+          aria-busy={uploading}
         >
-          {uploading ? "Uploading" : "Upload"}
+          {uploading ? "Processing" : "Upload"}
         </button>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={connected ? "Ask the agent to do something…" : "Connecting to backend…"}
+          placeholder={connected ? "Ask the agent to do somethingâ€¦" : "Connecting to backendâ€¦"}
           disabled={!connected || busy}
         />
         {busy ? (
@@ -268,3 +277,5 @@ export function ChatPanel({
     </div>
   );
 }
+
+
