@@ -1,4 +1,4 @@
-import type { ChatItem } from "../types";
+﻿import type { ChatItem } from "../types";
 import { DiffView } from "./DiffView";
 
 type ApprovalItem = Extract<ChatItem, { kind: "approval" }>;
@@ -20,6 +20,10 @@ export function ApprovalCard({ item, onRespond }: Props) {
         <span className={`approval-card__badge approval-card__badge--${item.status}`}>{item.status}</span>
       </div>
 
+      {pending && (
+        <div className="approval-card__notice">Review this request. It will not run until you approve it.</div>
+      )}
+
       {item.name === "run_shell" ? (
         <>
           {item.risk && item.risk !== "normal" && (
@@ -39,7 +43,7 @@ export function ApprovalCard({ item, onRespond }: Props) {
       {pending && (
         <div className="approval-card__actions">
           <button className="btn btn--approve" onClick={() => onRespond(item.id, true)}>
-            Approve
+            Approve once
           </button>
           <button className="btn btn--reject" onClick={() => onRespond(item.id, false)}>
             Reject
@@ -49,3 +53,5 @@ export function ApprovalCard({ item, onRespond }: Props) {
     </div>
   );
 }
+
+

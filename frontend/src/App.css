@@ -709,6 +709,16 @@
   color: var(--remove-text);
 }
 
+
+.approval-card__notice {
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
 .approval-card__command {
   font-family: var(--mono);
   font-size: 12px;
@@ -807,4 +817,5 @@
   color: var(--remove-text);
   border: none;
 }
+
 

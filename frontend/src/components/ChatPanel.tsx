@@ -3,7 +3,6 @@ import { uploadContextFile } from "../api/client";
 import type { ChatItem } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
-import { ToolChip } from "./ToolChip";
 
 interface Props {
   items: ChatItem[];
@@ -93,12 +92,8 @@ export function ChatPanel({
   }
 
   const hasPendingApproval = items.some((it) => it.kind === "approval" && it.status === "pending");
-  const promptCount = items.filter((it) => it.kind === "user").length;
-  const toolCount = items.filter((it) => it.kind === "tool").length;
-  const approvalCount = items.filter((it) => it.kind === "approval").length;
-  const errorCount = items.filter((it) => it.kind === "error").length;
   const recentActivity = items
-    .filter((it) => it.kind === "user" || it.kind === "tool" || it.kind === "approval" || it.kind === "error")
+    .filter((it) => it.kind === "user" || it.kind === "approval" || it.kind === "error")
     .slice(-8);
 
   const pickable = files.filter((f) => !attached.includes(f));
@@ -113,21 +108,12 @@ export function ChatPanel({
   return (
     <div className="chat-panel">
       <details className="activity-history">
-        <summary>
-          <span>Activity history</span>
-          <span className="activity-history__counts">
-            {promptCount} prompts | {toolCount} tools | {approvalCount} approvals
-            {errorCount > 0 ? ` | ${errorCount} errors` : ""}
-          </span>
-        </summary>
+        <summary><span>Activity history</span></summary>
         <div className="activity-history__list">
           {recentActivity.length === 0 && <div className="activity-history__empty">No activity yet.</div>}
           {recentActivity.map((item) => {
             if (item.kind === "user") {
               return <div key={item.id}>Prompt: {item.content}</div>;
-            }
-            if (item.kind === "tool") {
-              return <div key={item.id}>Tool: {item.name} ({item.status})</div>;
             }
             if (item.kind === "approval") {
               return <div key={item.id}>Approval: {item.name} ({item.status})</div>;
@@ -157,7 +143,7 @@ export function ChatPanel({
             case "assistant":
               return <MessageBubble key={item.id} role="assistant" content={item.content} />;
             case "tool":
-              return <ToolChip key={item.id} item={item} />;
+              return null;
             case "approval":
               return <ApprovalCard key={item.id} item={item} onRespond={onRespondApproval} />;
             case "error":
@@ -277,5 +263,8 @@ export function ChatPanel({
     </div>
   );
 }
+
+
+
 
 

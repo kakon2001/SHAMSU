@@ -308,8 +308,7 @@ class AgentSession:
                     ],
                 }
             )
-            if content:
-                self._emit({"type": "assistant_message", "content": content})
+            # Tool-call turns are internal. Approvals/tool events render separately.
 
             for tc in tool_calls:
                 self._check_stopped()
@@ -579,5 +578,7 @@ def _wants_workspace_context(user_message: str) -> bool:
         "find in",
     }
     return any(keyword in text for keyword in workspace_keywords)
+
+
 
 
