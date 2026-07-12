@@ -1,4 +1,4 @@
-"""Basic evaluation harness for the local coding agent.
+﻿"""Basic evaluation harness for the local coding agent.
 
 Run this after starting the backend. It checks the API health, session
 creation, persisted activity endpoint, and CLI script availability. It is meant
@@ -51,6 +51,19 @@ def upload_text_file(path: str, filename: str, content: str) -> Any:
         return json.loads(response.read().decode("utf-8"))
 
 
+
+def mcp_request(message: dict[str, Any]) -> Any:
+    server_path = Path(__file__).with_name("mcp_server.py")
+    proc = subprocess.run(
+        [sys.executable, str(server_path)],
+        input=json.dumps(message) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "MCP server failed")
+    return json.loads(proc.stdout.strip())
 def check(name: str, passed: bool, detail: str = "") -> bool:
     status = "PASS" if passed else "FAIL"
     suffix = f" - {detail}" if detail else ""
@@ -94,6 +107,16 @@ def main() -> int:
     )
     results.append(check("external upload endpoint", str(upload.get("path", "")).startswith("uploads/")))
 
+
+    mcp_init = mcp_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    results.append(check("mcp initialize", "serverInfo" in mcp_init.get("result", {})))
+
+    mcp_tools = mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    results.append(check("mcp tools/list", len(mcp_tools.get("result", {}).get("tools", [])) >= 5))
+
+    mcp_resources = mcp_request({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})
+    results.append(check("mcp resources/list", len(mcp_resources.get("result", {}).get("resources", [])) >= 2))
+
     cli_path = Path(__file__).with_name("cli.py")
     results.append(check("cli.py exists", cli_path.exists(), str(cli_path)))
 
@@ -115,3 +138,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

@@ -1,4 +1,4 @@
-# Local Coding Agent
+﻿# Local Coding Agent
 
 This project is a local Claude-style coding agent with a FastAPI backend and React frontend. It runs an Ollama model locally, works inside a sandboxed workspace, asks for approval before file writes or shell commands, and stores chat/activity history.
 
@@ -182,3 +182,42 @@ It accepts JSON-RPC messages on stdin for `initialize`, `tools/list`, and `tools
 ## Git Notes
 
 Do not commit local environments or generated files. The root `.gitignore` excludes `.env`, virtual environments, Python cache files, frontend builds, Node dependencies, logs, and local session database files.
+
+## MCP Server
+
+The MCP server is implemented in `backend/mcp_server.py`. It exposes safe read-only workspace tools and resources over stdio using JSON-RPC style MCP messages.
+
+Supported methods:
+
+- `initialize`
+- `ping`
+- `tools/list`
+- `tools/call`
+- `resources/list`
+- `resources/read`
+
+Exposed tools:
+
+- `list_directory`
+- `read_file`
+- `search_files`
+- `search_context`
+- `context_summary`
+
+Exposed resources:
+
+- `workspace://summary`
+- `workspace://tree`
+- `workspace://file/{path}`
+
+Run it from the backend folder:
+
+```powershell
+python mcp_server.py
+```
+
+Example:
+
+```powershell
+'{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | python mcp_server.py
+```
