@@ -1,13 +1,13 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import db
+from . import db, model_registry
 from .agent.session_manager import manager
 from .config import settings
-from .routes import agent, context, files, uploads
+from .routes import admin, agent, context, files, models, uploads
 
 
 def configure_activity_logging() -> None:
@@ -37,15 +37,17 @@ app = FastAPI(title="Local Coding Agent", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
-    # The dev server may be opened as localhost or 127.0.0.1 — allow both on any port.
+    # The dev server may be opened as localhost or 127.0.0.1 â€” allow both on any port.
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(admin.router)
 app.include_router(agent.router)
 app.include_router(context.router)
 app.include_router(files.router)
+app.include_router(models.router)
 app.include_router(uploads.router)
 
 
@@ -54,7 +56,9 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "workspace": str(settings.workdir_path),
-        "model": settings.model_name,
+        "model": model_registry.get_current_model(),
         "history_store": db.storage_mode(),
         "activity_log": str(settings.activity_log_file),
     }
+
+

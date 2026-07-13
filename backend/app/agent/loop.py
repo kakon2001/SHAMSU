@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import ollama
 
-from .. import context_index, db
+from .. import context_index, db, model_registry
 from ..config import settings
 from .prompts import SYSTEM_PROMPT
 from . import tools
@@ -330,7 +330,7 @@ class AgentSession:
             self._streamed_message_id = message_id
             chunks: list[str] = []
             stream = await self._client.chat(
-                model=settings.model_name,
+                model=model_registry.get_current_model(),
                 messages=self.conversation,
                 stream=True,
                 think=False,
@@ -351,7 +351,7 @@ class AgentSession:
             return "".join(chunks), []
 
         response = await self._client.chat(
-            model=settings.model_name,
+            model=model_registry.get_current_model(),
             messages=self.conversation,
             tools=TOOL_SCHEMAS if self._tools_enabled else None,
             stream=False,
@@ -578,6 +578,7 @@ def _wants_workspace_context(user_message: str) -> bool:
         "find in",
     }
     return any(keyword in text for keyword in workspace_keywords)
+
 
 
 

@@ -1,4 +1,4 @@
-"""Lightweight workspace context index.
+﻿"""Lightweight workspace context index.
 
 Text files in the workspace are split into chunks and searched with keyword
 overlap. This is a simple local foundation for context engineering; a future
@@ -95,6 +95,27 @@ def summarize_workspace(limit: int = 30) -> dict[str, object]:
     return {"files": files[:limit], "file_count": len(files), "chunk_count": total_chunks}
 
 
+
+def context_dashboard(limit: int = 12) -> dict[str, object]:
+    summary = summarize_workspace(limit=500)
+    files = list(summary.get("files", []))
+    uploaded = [item for item in files if str(item.get("path", "")).startswith("uploads/")]
+    largest = sorted(files, key=lambda item: int(item.get("chars") or 0), reverse=True)[:limit]
+    term_counts: Counter[str] = Counter()
+    for item in files:
+        for term in item.get("top_terms", []) or []:
+            term_counts[str(term)] += 1
+    return {
+        "file_count": summary.get("file_count", 0),
+        "chunk_count": summary.get("chunk_count", 0),
+        "uploaded_count": len(uploaded),
+        "auto_context_budget": AUTO_CONTEXT_CHARS,
+        "chunk_chars": CHUNK_CHARS,
+        "chunk_overlap": CHUNK_OVERLAP,
+        "top_terms": [term for term, _ in term_counts.most_common(12)],
+        "largest_files": largest,
+        "recent_uploads": uploaded[-limit:],
+    }
 def automatic_context(query: str, limit: int = 6, budget: int = AUTO_CONTEXT_CHARS) -> str:
     matches = search_context(query, limit=limit)
     if not matches:
@@ -212,3 +233,4 @@ def _line_number(starts: list[int], offset: int) -> int:
 
 def _terms(text: str) -> list[str]:
     return [term.lower() for term in re.findall(r"[a-zA-Z0-9_]{2,}", text)]
+

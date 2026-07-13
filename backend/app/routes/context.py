@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+﻿from fastapi import APIRouter, Query
 
 from .. import context_index
 
@@ -34,3 +34,8 @@ async def automatic_context(query: str = Query(...), limit: int = Query(6, ge=1,
         "query": query,
         "context": context_index.automatic_context(query, limit=limit),
     }
+
+
+@router.get("/dashboard")
+async def context_dashboard() -> dict[str, object]:
+    return context_index.context_dashboard()
