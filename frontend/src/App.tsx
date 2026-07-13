@@ -3,15 +3,19 @@ import "./App.css";
 import {
   createSession,
   deleteSession,
+  getAdminOverview,
+  getContextDashboard,
   getFileContent,
   getFileTree,
+  getModels,
   listSessions,
   saveFileContent,
+  setCurrentModel,
 } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { EditorTab, FileNode, SessionInfo } from "./types";
+import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -27,6 +31,10 @@ function App() {
   const [refreshingFiles, setRefreshingFiles] = useState(false);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [modelState, setModelState] = useState<ModelState | null>(null);
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -39,7 +47,24 @@ function App() {
       });
   }, []);
 
-  // Load stored sessions on startup; make sure at least one exists.
+  const refreshDashboard = useCallback(() => {
+    getAdminOverview().then(setAdminOverview).catch((err: Error) => setNotice(err.message));
+    getContextDashboard().then(setContextDashboard).catch((err: Error) => setNotice(err.message));
+  }, []);
+
+  const refreshModels = useCallback(() => {
+    getModels().then(setModelState).catch((err: Error) => setNotice(err.message));
+  }, []);
+
+  const changeModel = useCallback((modelId: string) => {
+    setCurrentModel(modelId)
+      .then((state) => {
+        setModelState(state);
+        setNotice(`Model switched to ${state.current}.`);
+      })
+      .catch((err: Error) => setNotice(err.message));
+  }, []);
+
   useEffect(() => {
     listSessions()
       .then(async (list) => {
@@ -92,8 +117,6 @@ function App() {
       .finally(() => setRefreshingFiles(false));
   }, []);
 
-  // Reload open tabs that the agent (or a shell command) may have rewritten on disk.
-  // Dirty tabs are left alone so user edits are never clobbered.
   const reloadCleanTabs = useCallback(() => {
     for (const tab of tabsRef.current) {
       if (tab.content !== tab.savedContent) continue;
@@ -116,7 +139,8 @@ function App() {
   const handleFilesChanged = useCallback(() => {
     void refreshFileTree();
     reloadCleanTabs();
-  }, [refreshFileTree, reloadCleanTabs]);
+    refreshDashboard();
+  }, [refreshFileTree, reloadCleanTabs, refreshDashboard]);
 
   const { items, connected, busy, sendChat, respondApproval, stop, reset } = useAgent(
     activeSessionId,
@@ -127,6 +151,11 @@ function App() {
   useEffect(() => {
     void refreshFileTree();
   }, [refreshFileTree]);
+
+  useEffect(() => {
+    refreshModels();
+    refreshDashboard();
+  }, [refreshDashboard, refreshModels]);
 
   const openFile = useCallback((path: string) => {
     setActivePath(path);
@@ -181,6 +210,29 @@ function App() {
         <span className={`app__status app__status--${connected ? "on" : "off"}`}>
           {connected ? "connected" : "disconnected"}
         </span>
+        <div className="app__model-switcher">
+          <span>Model</span>
+          <select
+            value={modelState?.current ?? ""}
+            onChange={(e) => changeModel(e.target.value)}
+            disabled={!modelState}
+          >
+            {modelState?.models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          className="app__dashboard-toggle"
+          onClick={() => {
+            setDashboardOpen((open) => !open);
+            refreshDashboard();
+          }}
+        >
+          Admin / Context
+        </button>
       </header>
 
       {notice && (
@@ -189,37 +241,65 @@ function App() {
         </div>
       )}
 
+      {dashboardOpen && (
+        <section className="dashboard-panel">
+          <div className="dashboard-panel__header">
+            <strong>Admin and Context Dashboard</strong>
+            <button className="btn" onClick={refreshDashboard}>Refresh dashboard</button>
+          </div>
+          <div className="dashboard-grid">
+            <div className="dashboard-card"><span className="dashboard-card__label">Sessions</span><strong>{adminOverview?.session_count ?? 0}</strong></div>
+            <div className="dashboard-card"><span className="dashboard-card__label">Prompts</span><strong>{adminOverview?.totals.user_message ?? 0}</strong></div>
+            <div className="dashboard-card"><span className="dashboard-card__label">Approvals</span><strong>{adminOverview?.totals.approval_request ?? 0}</strong></div>
+            <div className="dashboard-card"><span className="dashboard-card__label">Indexed Files</span><strong>{contextDashboard?.file_count ?? 0}</strong></div>
+            <div className="dashboard-card"><span className="dashboard-card__label">Context Chunks</span><strong>{contextDashboard?.chunk_count ?? 0}</strong></div>
+            <div className="dashboard-card"><span className="dashboard-card__label">Uploads</span><strong>{contextDashboard?.uploaded_count ?? 0}</strong></div>
+          </div>
+          <div className="dashboard-columns">
+            <div>
+              <h3>Recent Activity</h3>
+              <div className="dashboard-list">
+                {(adminOverview?.recent_events ?? []).slice(0, 8).map((event, index) => (
+                  <div key={`${event.timestamp}-${index}`}>{event.type}: {event.summary}</div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3>Context Terms</h3>
+              <div className="dashboard-terms">
+                {(contextDashboard?.top_terms ?? []).map((term) => <span key={term}>{term}</span>)}
+              </div>
+              <h3>Largest Indexed Files</h3>
+              <div className="dashboard-list">
+                {(contextDashboard?.largest_files ?? []).slice(0, 5).map((file) => (
+                  <div key={file.path}>{file.path} ({file.chars.toLocaleString()} chars)</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="app__body">
         <section className="chat-shell">
           <div className="chat-shell__toolbar">
-          <select
-            className="app__session-select"
-            value={activeSessionId ?? ""}
-            onChange={(e) => setActiveSessionId(e.target.value)}
-            disabled={sessions.length === 0}
-            title="Switch session"
-          >
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.busy && s.id !== activeSessionId ? "â— " : ""}
-                {s.title}
-              </option>
-            ))}
-          </select>
-          <button className="app__new-chat" onClick={newSession} title="Start a new session">
-            New session
-          </button>
-          <button className="app__new-chat" onClick={reset} disabled={busy} title="Clear this session's transcript">
-            Clear
-          </button>
-          <button
-            className="app__new-chat app__session-delete"
-            onClick={removeSession}
-            disabled={busy || !activeSessionId}
-            title="Delete this session"
-          >
-            Delete
-          </button>
+            <select
+              className="app__session-select"
+              value={activeSessionId ?? ""}
+              onChange={(e) => setActiveSessionId(e.target.value)}
+              disabled={sessions.length === 0}
+              title="Switch session"
+            >
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.busy && s.id !== activeSessionId ? "* " : ""}
+                  {s.title}
+                </option>
+              ))}
+            </select>
+            <button className="app__new-chat" onClick={newSession} title="Start a new session">New session</button>
+            <button className="app__new-chat" onClick={reset} disabled={busy} title="Clear this session's transcript">Clear</button>
+            <button className="app__new-chat app__session-delete" onClick={removeSession} disabled={busy || !activeSessionId} title="Delete this session">Delete</button>
           </div>
           <ChatPanel
             items={items}
@@ -230,7 +310,10 @@ function App() {
             onSend={sendChat}
             onStop={stop}
             onRespondApproval={respondApproval}
-            onUploaded={() => void refreshFileTree(true)}
+            onUploaded={() => {
+              void refreshFileTree(true);
+              refreshDashboard();
+            }}
           />
         </section>
         <section className="workspace-panel">
@@ -246,9 +329,7 @@ function App() {
             >
               <option value="">Open workspace file</option>
               {workspaceFiles.map((path) => (
-                <option key={path} value={path}>
-                  {path}
-                </option>
+                <option key={path} value={path}>{path}</option>
               ))}
             </select>
             <button
@@ -277,5 +358,3 @@ function App() {
 }
 
 export default App;
-
-

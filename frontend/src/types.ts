@@ -1,4 +1,4 @@
-export interface FileNode {
+﻿export interface FileNode {
   name: string;
   path: string;
   type: "file" | "dir";
@@ -85,4 +85,49 @@ export interface EditorTab {
   path: string;
   content: string;
   savedContent: string;
+}
+
+export interface LocalModel {
+  id: string;
+  label: string;
+  size: string;
+  description: string;
+  active: boolean;
+}
+
+export interface ModelState {
+  current: string;
+  models: LocalModel[];
+}
+
+export interface AdminOverview {
+  totals: Record<string, number>;
+  session_count: number;
+  sessions: Array<{
+    id: string;
+    title: string;
+    created_at: string;
+    updated_at: string;
+    busy: boolean;
+    counts: Record<string, number>;
+  }>;
+  recent_events: Array<{
+    session_id: string;
+    session_title: string;
+    type: string;
+    timestamp?: string;
+    summary: string;
+  }>;
+}
+
+export interface ContextDashboard {
+  file_count: number;
+  chunk_count: number;
+  uploaded_count: number;
+  auto_context_budget: number;
+  chunk_chars: number;
+  chunk_overlap: number;
+  top_terms: string[];
+  largest_files: Array<{ path: string; chars: number; chunks: number; summary: string; top_terms: string[] }>;
+  recent_uploads: Array<{ path: string; chars: number; chunks: number; summary: string; top_terms: string[] }>;
 }

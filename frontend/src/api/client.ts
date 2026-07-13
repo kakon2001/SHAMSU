@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -109,4 +109,25 @@ export function uploadContextFile(file: File): Promise<UploadedContextFile> {
   }).then((res) => handle<UploadedContextFile>(res));
 }
 
+
+
+// ------------------------------------------------------------------ models
+
+export function getModels(): Promise<ModelState> {
+  return fetch(`${API_BASE}/api/models`, { cache: "no-store" }).then((res) => handle<ModelState>(res));
+}
+
+export function setCurrentModel(modelId: string): Promise<ModelState> {
+  return post("/api/models/current", { model_id: modelId });
+}
+
+// ------------------------------------------------------------------- admin
+
+export function getAdminOverview(): Promise<AdminOverview> {
+  return fetch(`${API_BASE}/api/admin/overview`, { cache: "no-store" }).then((res) => handle<AdminOverview>(res));
+}
+
+export function getContextDashboard(): Promise<ContextDashboard> {
+  return fetch(`${API_BASE}/api/context/dashboard`, { cache: "no-store" }).then((res) => handle<ContextDashboard>(res));
+}
 

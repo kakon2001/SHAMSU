@@ -100,7 +100,7 @@ export function ChatPanel({
   const filtered = filter
     ? pickable.filter((f) => f.toLowerCase().includes(filter.toLowerCase()))
     : pickable;
-  // Surface the file open in the editor at the top â€” "add this file" is the common case.
+  // Surface the file open in the editor at the top - "add this file" is the common case.
   const ordered = activePath && filtered.includes(activePath)
     ? [activePath, ...filtered.filter((f) => f !== activePath)]
     : filtered;
@@ -154,9 +154,9 @@ export function ChatPanel({
               );
           }
         })}
-        {busy && !hasPendingApproval && <div className="chat-panel__typing">Agent is workingâ€¦</div>}
+        {busy && !hasPendingApproval && <div className="chat-panel__typing">Agent is working...</div>}
         {hasPendingApproval && (
-          <div className="chat-panel__waiting">Waiting for your approval above â†‘</div>
+          <div className="chat-panel__waiting">Waiting for your approval above</div>
         )}
       </div>
 
@@ -207,7 +207,7 @@ export function ChatPanel({
                 className="file-picker__filter"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter filesâ€¦"
+                placeholder="Filter files..."
               />
               <div className="file-picker__list">
                 {ordered.length === 0 && <div className="file-picker__empty">No files.</div>}
@@ -247,7 +247,7 @@ export function ChatPanel({
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={connected ? "Ask the agent to do somethingâ€¦" : "Connecting to backendâ€¦"}
+          placeholder={connected ? "Ask the agent to do something..." : "Connecting to backend..."}
           disabled={!connected || busy}
         />
         {busy ? (
