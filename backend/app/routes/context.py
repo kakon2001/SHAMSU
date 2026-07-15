@@ -39,3 +39,11 @@ async def automatic_context(query: str = Query(...), limit: int = Query(6, ge=1,
 @router.get("/dashboard")
 async def context_dashboard() -> dict[str, object]:
     return context_index.context_dashboard()
+
+
+@router.get("/overview")
+async def context_overview(query: str = Query("")) -> dict[str, object]:
+    return {
+        "query": query,
+        "overview": context_index.automatic_summary_context(query),
+    }

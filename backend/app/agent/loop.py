@@ -249,15 +249,19 @@ class AgentSession:
             await self.persist()
 
     def _with_file_context(self, user_message: str, context_files: list[str]) -> str:
-        """Inline attached workspace files above the user's message so the model sees them
-        without having to call read_file. Kept small â€” local models have tight contexts."""
+        """Build a compact memory packet for the local model.
+
+        Attached files are still highest priority. Around them, the agent gets
+        long-session memory, relevant summaries, and exact matching chunks so it
+        can answer across more project/history context than the raw model window.
+        """
         auto_context = (
             context_index.automatic_context(user_message)
             if not context_files or _wants_workspace_context(user_message)
             else ""
         )
-        if not context_files and not auto_context:
-            return user_message
+        summary_context = context_index.automatic_summary_context(user_message)
+        conversation_memory = context_index.conversation_memory(self.events, user_message)
         blocks = []
         for path in context_files[:5]:
             content = tools.read_file(path)
@@ -265,7 +269,14 @@ class AgentSession:
                 content = content[: settings.max_tool_output_chars] + "\n... [truncated]"
             self._last_file_path = path
             blocks.append(f"--- {path} ---\n{content}")
+
         parts = []
+        if conversation_memory:
+            parts.append(
+                "Long-session memory from previous turns. Use this to preserve continuity, "
+                "but prefer newer attached files or exact context when they conflict:\n\n"
+                + conversation_memory
+            )
         if blocks:
             parts.append(
                 "The user attached the following local file(s) as context. If the user says "
@@ -273,10 +284,16 @@ class AgentSession:
                 "attached file contents and do not substitute another workspace file:\n\n"
                 + "\n\n".join(blocks)
             )
+        if summary_context:
+            parts.append(
+                "Compact project/upload summaries for broader context. These are summaries, "
+                "so verify exact details with file tools before editing:\n\n" + summary_context
+            )
         if auto_context:
-            parts.append("Relevant indexed workspace/upload context:\n\n" + auto_context)
+            parts.append("Exact relevant indexed workspace/upload chunks:\n\n" + auto_context)
+        if not parts:
+            return user_message
         return "\n\n".join(parts) + f"\n\nUser request: {user_message}"
-
     async def _run_loop(self) -> None:
         for _ in range(settings.max_tool_iterations):
             self._check_stopped()
@@ -578,6 +595,7 @@ def _wants_workspace_context(user_message: str) -> bool:
         "find in",
     }
     return any(keyword in text for keyword in workspace_keywords)
+
 
 
 
