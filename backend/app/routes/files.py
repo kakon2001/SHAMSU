@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -28,7 +28,7 @@ async def get_file_content(path: str = Query(...)) -> FileContent:
 
 @router.put("/content", response_model=FileContent)
 async def save_file_content(body: SaveFileRequest) -> FileContent:
-    """Direct save from the editor — a user-initiated action, so no approval gate."""
+    """Direct save from the editor â€” a user-initiated action, so no approval gate."""
     target = _resolve_or_400(body.path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body.content, encoding="utf-8")
@@ -52,3 +52,17 @@ def _build_tree(path: Path, root: Path) -> FileNode:
         ]
         return FileNode(name=(path.name if path != root else "."), path=rel, type="dir", children=children)
     return FileNode(name=path.name, path=rel, type="file")
+
+
+@router.delete("/content")
+async def delete_file_content(path: str = Query(...)) -> dict[str, bool]:
+    target = _resolve_or_400(path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"'{path}' does not exist")
+    if target.is_dir():
+        raise HTTPException(status_code=400, detail=f"'{path}' is a directory")
+    try:
+        target.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete '{path}': {exc}")
+    return {"ok": True}

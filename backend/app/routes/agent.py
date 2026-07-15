@@ -1,3 +1,4 @@
+﻿import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,22 @@ class ChatRequest(BaseModel):
 class ApprovalRequest(BaseModel):
     id: str
     approved: bool
+
+
+class CliEventRequest(BaseModel):
+    action: str
+    target: Optional[str] = None
+    summary: str
+    approved: Optional[bool] = None
+    ok: bool = True
+    preview: str = ""
+    command: Optional[str] = None
+    path: Optional[str] = None
+    diff: Optional[str] = None
+    is_new_file: bool = False
+    risk: Optional[str] = None
+    risk_reason: Optional[str] = None
+    changed_paths: list[str] = Field(default_factory=list)
 
 
 class SessionInfo(BaseModel):
@@ -110,7 +127,7 @@ async def delete_session(session_id: str) -> dict[str, bool]:
 
 @router.get("/{session_id}/state", response_model=AgentResponse)
 async def get_state(session_id: str) -> AgentResponse:
-    """Full transcript — lets the UI rebuild after a reload or session switch."""
+    """Full transcript â€” lets the UI rebuild after a reload or session switch."""
     session = _get_session(session_id)
     return AgentResponse(events=session.full_state(), busy=session.busy)
 
@@ -151,6 +168,41 @@ async def get_activity(session_id: str) -> ActivityHistory:
         errors=errors,
     )
 
+
+
+@router.post("/{session_id}/cli-event", response_model=AgentResponse)
+async def record_cli_event(session_id: str, body: CliEventRequest) -> AgentResponse:
+    """Record deterministic CLI actions so they are visible in the web history."""
+    session = _get_session(session_id)
+    if session.busy:
+        raise HTTPException(status_code=409, detail="Session is busy")
+
+    call_id = uuid.uuid4().hex[:12]
+    action = body.action.strip() or "action"
+    target = body.target or body.path or body.command or ""
+    session._emit({"type": "user_message", "content": f"[CLI] {body.summary}", "context_files": []})
+
+    if body.approved is not None:
+        approval: dict[str, Any] = {
+            "type": "approval_request",
+            "id": call_id,
+            "name": "run_shell" if action in {"shell", "delete"} else "write_file",
+        }
+        if action in {"shell", "delete"}:
+            approval.update({"command": body.command or f"{action} {target}", "risk": body.risk, "risk_reason": body.risk_reason})
+        else:
+            approval.update({"path": body.path or target, "diff": body.diff or body.preview, "is_new_file": body.is_new_file})
+        session._emit(approval)
+        session._emit({"type": "approval_resolved", "id": call_id, "approved": body.approved})
+
+    session._emit({"type": "tool_call", "id": call_id, "name": f"cli_{action}", "args": {"target": target}})
+    session._emit({"type": "tool_result", "id": call_id, "name": f"cli_{action}", "ok": body.ok, "preview": body.preview[:500]})
+    if body.changed_paths:
+        session._emit({"type": "files_changed", "paths": body.changed_paths})
+    session._emit({"type": "assistant_message", "content": body.summary})
+    session._emit({"type": "turn_end"})
+    await session.persist()
+    return AgentResponse(events=session.drain(), busy=False)
 
 @router.post("/{session_id}/continue", response_model=AgentResponse)
 async def continue_turn(session_id: str) -> AgentResponse:
@@ -247,3 +299,4 @@ def _activity_entry(event: dict[str, Any]) -> Optional[ActivityEntry]:
             data={},
         )
     return None
+
