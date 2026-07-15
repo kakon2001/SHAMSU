@@ -66,6 +66,14 @@ MCP_TOOLS = [
             "properties": {"limit": {"type": "integer", "default": 30}},
         },
     },
+    {
+        "name": "context_overview",
+        "description": "Build a compact infinite-context overview from file and upload summaries.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "default": ""}},
+        },
+    },
 ]
 
 
@@ -98,6 +106,7 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
             ensure_ascii=False,
             indent=2,
         ),
+        "context_overview": lambda args: context_index.automatic_summary_context(str(args.get("query") or "")),
     }
     if name not in handlers:
         raise ValueError(f"Unknown tool: {name}")
@@ -253,3 +262,4 @@ def _int_arg(args: dict[str, Any], key: str, default: int, minimum: int, maximum
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

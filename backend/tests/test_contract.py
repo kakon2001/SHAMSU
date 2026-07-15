@@ -140,7 +140,14 @@ def test_context_summary_dashboard_and_search(backend_server: None) -> None:
     dashboard = request("GET", "/api/context/dashboard")
     assert dashboard["file_count"] >= 1
     assert dashboard["chunk_count"] >= 1
+    assert dashboard["summary_context_budget"] >= 1
+    assert dashboard["conversation_memory_budget"] >= 1
     assert "largest_files" in dashboard
+    assert "file_summaries" in dashboard
+
+    overview = request("GET", "/api/context/overview?query=pytest")
+    assert overview["query"] == "pytest"
+    assert "sample.py" in overview["overview"] or "notes.txt" in overview["overview"]
 
     search = request("GET", "/api/context/search?query=pytest&limit=3")
     assert search["query"] == "pytest"
@@ -176,7 +183,7 @@ def test_mcp_tools_list(test_env: dict[str, str]) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     tool_names = {tool["name"] for tool in payload["result"]["tools"]}
-    assert {"list_directory", "read_file", "search_files", "search_context", "context_summary"}.issubset(tool_names)
+    assert {"list_directory", "read_file", "search_files", "search_context", "context_summary", "context_overview"}.issubset(tool_names)
 
 
 def test_cli_sessions_command(backend_server: None) -> None:
@@ -190,3 +197,4 @@ def test_cli_sessions_command(backend_server: None) -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "No sessions yet." in proc.stdout or "pytest" in proc.stdout or proc.stdout.strip()
+

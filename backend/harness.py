@@ -112,7 +112,8 @@ def main() -> int:
     results.append(check("mcp initialize", "serverInfo" in mcp_init.get("result", {})))
 
     mcp_tools = mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    results.append(check("mcp tools/list", len(mcp_tools.get("result", {}).get("tools", [])) >= 5))
+    tool_names = {tool.get("name") for tool in mcp_tools.get("result", {}).get("tools", [])}
+    results.append(check("mcp tools/list", "context_overview" in tool_names and len(tool_names) >= 6))
 
     mcp_resources = mcp_request({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})
     results.append(check("mcp resources/list", len(mcp_resources.get("result", {}).get("resources", [])) >= 2))
@@ -138,5 +139,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
