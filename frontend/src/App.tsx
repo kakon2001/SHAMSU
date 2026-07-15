@@ -38,10 +38,18 @@ function App() {
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
 
-  const refreshSessions = useCallback(() => {
+  const refreshSessions = useCallback((selectNewestCli = false) => {
     listSessions()
-      .then(setSessions)
+      .then((list) => {
+        setSessions(list);
+        const newest = list[0];
+        if (selectNewestCli && newest?.title.startsWith("CLI ") && newest.id !== activeSessionIdRef.current) {
+          setActiveSessionId(newest.id);
+        }
+      })
       .catch(() => {
         // Backend unreachable; the connection badge already reflects it.
       });
@@ -156,6 +164,17 @@ function App() {
     refreshModels();
     refreshDashboard();
   }, [refreshDashboard, refreshModels]);
+
+  
+  // CLI-created sessions are recorded by the backend; poll so the browser catches them.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      refreshSessions(true);
+      void refreshFileTree();
+      if (dashboardOpen) refreshDashboard();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [dashboardOpen, refreshDashboard, refreshFileTree, refreshSessions]);
 
   const openFile = useCallback((path: string) => {
     setActivePath(path);
@@ -358,3 +377,5 @@ function App() {
 }
 
 export default App;
+
+

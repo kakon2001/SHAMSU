@@ -198,3 +198,92 @@ def test_cli_sessions_command(backend_server: None) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "No sessions yet." in proc.stdout or "pytest" in proc.stdout or proc.stdout.strip()
 
+
+
+def test_cli_direct_file_commands(backend_server: None) -> None:
+    write_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "write", "cli_pytest.txt", "CLI", "direct", "write", "passed"],
+        cwd=BACKEND_DIR,
+        input="y\n",
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert write_proc.returncode == 0, write_proc.stderr
+    assert "Approve? [y/N]" in write_proc.stdout
+    assert "Wrote" in write_proc.stdout
+    assert "[history] recorded in web session" in write_proc.stdout
+
+    sessions_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "sessions"],
+        cwd=BACKEND_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert sessions_proc.returncode == 0, sessions_proc.stderr
+    assert "CLI write: cli_pytest.txt" in sessions_proc.stdout
+
+    read_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_pytest.txt"],
+        cwd=BACKEND_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert read_proc.returncode == 0, read_proc.stderr
+    assert "CLI direct write passed" in read_proc.stdout
+
+    delete_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "delete", "cli_pytest.txt"],
+        cwd=BACKEND_DIR,
+        input="y\n",
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert delete_proc.returncode == 0, delete_proc.stderr
+    assert "Approve? [y/N]" in delete_proc.stdout
+    assert "Deleted cli_pytest.txt" in delete_proc.stdout
+
+    missing_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_pytest.txt"],
+        cwd=BACKEND_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert missing_proc.returncode == 2
+    assert "HTTP 404" in missing_proc.stderr
+
+
+def test_cli_ask_routes_obvious_file_create(backend_server: None) -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "cli.py",
+            "--api",
+            API_BASE,
+            "ask",
+            "Create a file named cli_ask_pytest.txt in the workspace with the text: CLI ask route passed.",
+        ],
+        cwd=BACKEND_DIR,
+        input="y\n",
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Approve? [y/N]" in proc.stdout
+    assert "Wrote" in proc.stdout
+
+    read_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_ask_pytest.txt"],
+        cwd=BACKEND_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert read_proc.returncode == 0, read_proc.stderr
+    assert "CLI ask route passed." in read_proc.stdout
+
