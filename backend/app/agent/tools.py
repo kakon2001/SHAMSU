@@ -1,4 +1,4 @@
-"""Tool implementations for the agent.
+﻿"""Tool implementations for the agent.
 
 Read-only tools (list_directory, read_file, search_files) execute immediately.
 Mutating tools (run_shell, write_file) are declared here but the agent loop
@@ -145,6 +145,137 @@ def search_context(query: str) -> str:
     return context_index.format_context_results(query)
 
 
+
+
+def read_file_range(path: str, start_line: int = 1, end_line: int = 200) -> str:
+    """Read a bounded line range from a large workspace file."""
+    if start_line < 1:
+        start_line = 1
+    if end_line < start_line:
+        end_line = start_line
+    if end_line - start_line > 500:
+        end_line = start_line + 500
+    target = resolve_in_workspace(path)
+    if not target.exists():
+        return f"Error: '{path}' does not exist"
+    if target.is_dir():
+        return f"Error: '{path}' is a directory"
+    lines: list[str] = []
+    try:
+        with target.open("r", encoding="utf-8", errors="replace") as handle:
+            for lineno, line in enumerate(handle, start=1):
+                if lineno < start_line:
+                    continue
+                if lineno > end_line:
+                    break
+                lines.append(f"{lineno}: {line.rstrip()}")
+    except Exception as exc:
+        return f"Error reading '{path}': {exc}"
+    return "\n".join(lines) if lines else f"No lines found in requested range {start_line}-{end_line}."
+
+
+def project_index(path: str = ".") -> str:
+    """Return a compact local project index with files, sizes, symbols, and imports."""
+    root = resolve_in_workspace(path)
+    if not root.exists():
+        return f"Error: '{path}' does not exist"
+    files: list[dict[str, object]] = []
+    for file in sorted(root.rglob("*")):
+        if not file.is_file() or any(part in IGNORED_DIRS for part in file.parts):
+            continue
+        rel = file.relative_to(settings.workdir_path).as_posix()
+        try:
+            size = file.stat().st_size
+        except OSError:
+            continue
+        if size > 1024 * 1024 or file.suffix.lower() not in {".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".md", ".txt", ".json"}:
+            files.append({"path": rel, "bytes": size, "indexed": False})
+            continue
+        try:
+            content = file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            content = ""
+        files.append(
+            {
+                "path": rel,
+                "bytes": size,
+                "lines": content.count("\n") + (1 if content else 0),
+                "indexed": True,
+                "symbols": _code_symbols(content)[:20],
+                "imports": _import_names(content)[:20],
+            }
+        )
+    return json_dumps({"root": path, "file_count": len(files), "files": files[:300]})
+
+
+def make_patch_diff(path: str, old_text: str, new_text: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+    ) or "(no changes)"
+
+
+def replace_in_file(path: str, old_text: str, new_text: str) -> str:
+    """Patch-style edit: replace one exact text block in a file."""
+    target = resolve_in_workspace(path)
+    if not target.exists() or not target.is_file():
+        return f"Error: '{path}' is not a file"
+    current = target.read_text(encoding="utf-8", errors="replace")
+    if old_text not in current:
+        return "Error: old_text was not found exactly; use read_file_range/search_files to locate the current text."
+    updated = current.replace(old_text, new_text, 1)
+    target.write_text(updated, encoding="utf-8")
+    return f"Patched '{path}' by replacing {len(old_text)} characters with {len(new_text)} characters."
+
+
+def make_replace_diff(path: str, old_text: str, new_text: str) -> tuple[str, bool]:
+    target = resolve_in_workspace(path)
+    current = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
+    if old_text not in current:
+        return "Error: old_text was not found exactly; no patch can be previewed.", False
+    updated = current.replace(old_text, new_text, 1)
+    return make_patch_diff(path, current, updated), False
+
+
+def json_dumps(value: object) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _code_symbols(text: str) -> list[str]:
+    symbols: list[str] = []
+    patterns = [
+        r"^\s*(?:async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"^\s*(?:export\s+)?(?:function|const|let|var|class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.MULTILINE):
+            name = match.group(1)
+            if name not in symbols:
+                symbols.append(name)
+    return symbols
+
+
+def _import_names(text: str) -> list[str]:
+    imports: list[str] = []
+    patterns = [
+        r"^\s*import\s+([A-Za-z0-9_./@-]+)",
+        r"^\s*from\s+([A-Za-z0-9_./@-]+)\s+import",
+        r"from\s+['\"]([^'\"]+)['\"]",
+        r"require\(['\"]([^'\"]+)['\"]\)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.MULTILINE):
+            name = match.group(1)
+            if name not in imports:
+                imports.append(name)
+    return imports
+
 # ---------------------------------------------------------------------------
 # Mutating tools (executed only after user approval)
 # ---------------------------------------------------------------------------
@@ -212,7 +343,7 @@ def make_diff(path: str, new_content: str) -> tuple[str, bool]:
             tofile=f"b/{path}",
         )
     )
-    return diff or "(no changes — file content is identical)", is_new
+    return diff or "(no changes â€” file content is identical)", is_new
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +416,33 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "read_file_range",
+            "description": "Read a bounded line range from a large file. Use this for huge files instead of read_file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer"},
+                    "end_line": {"type": "integer"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "project_index",
+            "description": "Build a compact index of project files, sizes, symbols, and imports for multi-file reasoning.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Relative directory, default root."}},
+                "required": [],
+            },
+        },
+    },    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": (
                 "Write the complete new contents of a file (relative path). The user is shown a diff and must "
@@ -301,6 +459,21 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "type": "function",
+        "function": {
+            "name": "replace_in_file",
+            "description": "Patch-based edit: replace one exact text block in a file. User sees a diff and must approve.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {"type": "string"},
+                    "new_text": {"type": "string"},
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },    {
         "type": "function",
         "function": {
             "name": "run_shell",
@@ -320,6 +493,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "search_files", "search_context"}
-MUTATING_TOOLS = {"write_file", "run_shell"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "project_index"}
+MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
+

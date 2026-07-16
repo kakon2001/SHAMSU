@@ -287,3 +287,109 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None) -> None:
     assert read_proc.returncode == 0, read_proc.stderr
     assert "CLI ask route passed." in read_proc.stdout
 
+
+
+def test_preview_server_start_status_and_stop(backend_server: None) -> None:
+    state = request("POST", "/api/preview/start", {"path": "sample.py", "port": 19090})
+    assert state["running"] is True
+    assert state["port"] == 19090
+    assert state["url"] == "http://127.0.0.1:19090/sample.py"
+
+    status = request("GET", "/api/preview/status?path=sample.py&port=19090")
+    assert status["running"] is True
+    assert status["url"] == "http://127.0.0.1:19090/sample.py"
+
+    stopped = request("POST", "/api/preview/stop")
+    assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
+
+def test_task_plan_api_and_cli(backend_server: None) -> None:
+    plan = request("POST", "/api/tasks/plan", {"prompt": "make a bouncing ball game"})
+    assert plan["mode"] == "game-generator"
+    assert plan["suggested_files"][0]["path"] == "bouncing_ball.html"
+    assert "requestAnimationFrame" in plan["suggested_files"][0]["content"]
+
+    proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "task", "make", "a", "bouncing", "ball", "game"],
+        cwd=BACKEND_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Mode: game-generator" in proc.stdout
+    assert "bouncing_ball.html" in proc.stdout
+
+
+def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    patch_target = workspace / "patch_target.py"
+    patch_target.write_text("def greet():\n    return 'hello'\n", encoding="utf-8")
+
+    index_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "index"],
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert index_proc.returncode == 0, index_proc.stderr
+    assert "sample.py" in index_proc.stdout
+    assert "patch_target.py" in index_proc.stdout
+    assert "[history] recorded in web session" in index_proc.stdout
+
+    range_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "range", "sample.py", "1", "2"],
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert range_proc.returncode == 0, range_proc.stderr
+    assert "1: def add" in range_proc.stdout
+    assert "2:     return a + b" in range_proc.stdout
+
+    patch_proc = subprocess.run(
+        [sys.executable, "cli.py", "--api", API_BASE, "patch", "patch_target.py", "return 'hello'", "return 'hi'"],
+        cwd=BACKEND_DIR,
+        env=test_env,
+        input="y\n",
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert patch_proc.returncode == 0, patch_proc.stderr
+    assert "Approve? [y/N]" in patch_proc.stdout
+    assert "Patched 'patch_target.py'" in patch_proc.stdout
+    assert "return 'hi'" in patch_target.read_text(encoding="utf-8")
+
+def test_implicit_code_fence_path_extraction() -> None:
+    from app.agent.loop import _extract_candidate_file_path
+
+    assert _extract_candidate_file_path("**File: `division.py`**") == "division.py"
+    assert _extract_candidate_file_path("", "create a new file called game.py") == "game.py"
+
+
+def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.agent.loop import AgentSession
+
+    session = AgentSession(title="implicit edit test")
+    session._last_user_message = "create a new file called division.py which can divide numbers"
+    content = """Sure.\n\n**File: `division.py`**\n\n```python\ndef divide(a, b):\n    return a / b\n```\n"""
+    captured: dict[str, object] = {}
+
+    async def fake_execute_tool(name: str, args: dict[str, object]) -> str:
+        captured["name"] = name
+        captured["args"] = args
+        return "ok"
+
+    monkeypatch.setattr(session, "_execute_tool", fake_execute_tool)
+    handled = asyncio.run(session._maybe_offer_implicit_edit(content))
+
+    assert handled is True
+    assert captured["name"] == "write_file"
+    assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
+

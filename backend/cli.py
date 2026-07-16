@@ -138,6 +138,25 @@ def read_workspace_file(base: str, path: str) -> None:
     log_cli_event(base, "read", f"CLI read {path}.", target=path, path=path, preview=content)
 
 
+def read_workspace_range(base: str, path: str, start_line: int, end_line: int) -> None:
+    content = tools.read_file_range(path, start_line, end_line)
+    print(content)
+    log_cli_event(
+        base,
+        "range",
+        f"CLI read {path} lines {start_line}-{end_line}.",
+        target=path,
+        path=path,
+        preview=content,
+    )
+
+
+def print_project_index(base: str, path: str = ".") -> None:
+    index = tools.project_index(path)
+    print(index)
+    log_cli_event(base, "index", f"CLI indexed workspace path {path}.", target=path, preview=index)
+
+
 def write_workspace_file(base: str, path: str, content: str) -> None:
     print("\nApproval required")
     print(f"File: {path}")
@@ -172,6 +191,27 @@ def delete_workspace_file(base: str, path: str) -> None:
     message = f"Deleted {path}."
     print(message)
     log_cli_event(base, "delete", f"CLI deleted {path}.", target=path, approved=True, command=f"delete {path}", changed_paths=[path], preview=message)
+
+
+def patch_workspace_file(base: str, path: str, old_text: str, new_text: str) -> None:
+    diff, _ = tools.make_replace_diff(path, old_text, new_text)
+    if diff.startswith("Error:"):
+        print(diff)
+        log_cli_event(base, "patch", f"CLI could not patch {path}.", target=path, approved=False, ok=False, path=path, preview=diff)
+        return
+    print("\nApproval required")
+    print(f"Patch file: {path}")
+    print(diff[:4000])
+    if len(diff) > 4000:
+        print("... diff truncated in CLI")
+    approved = ask_approval()
+    if not approved:
+        print("Rejected. File was not patched.")
+        log_cli_event(base, "patch", f"CLI rejected patching {path}.", target=path, approved=False, ok=False, path=path, diff=diff, preview="Rejected before patching.")
+        return
+    result = tools.replace_in_file(path, old_text, new_text)
+    print(result)
+    log_cli_event(base, "patch", f"CLI patched {path}.", target=path, approved=True, path=path, diff=diff, changed_paths=[path], preview=result)
 
 
 def run_direct_shell(command: str, base: str = DEFAULT_API) -> None:
@@ -322,6 +362,28 @@ def chat(base: str, message: str, session_id: str | None, context_files: list[st
     return session_id
 
 
+
+def print_task_plan(base: str, prompt: str) -> None:
+    plan = request("POST", api_url(base, "/api/tasks/plan"), {"prompt": prompt})
+    print(f"Mode: {plan['mode']}")
+    print(f"Goal: {plan['goal']}")
+    print("\nSteps:")
+    for index, step in enumerate(plan.get("steps") or [], start=1):
+        print(f"{index}. {step}")
+    if plan.get("suggested_files"):
+        print("\nSuggested files:")
+        for item in plan["suggested_files"]:
+            print(f"--- {item['path']} ---")
+            print(item["content"])
+    if plan.get("verify_commands"):
+        print("\nVerify commands:")
+        for command in plan["verify_commands"]:
+            print(f"- {command}")
+    if plan.get("notes"):
+        print("\nNotes:")
+        for note in plan["notes"]:
+            print(f"- {note}")
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI for the local coding agent backend.")
     parser.add_argument("--api", default=DEFAULT_API, help=f"Backend URL, default {DEFAULT_API}")
@@ -342,6 +404,14 @@ def build_parser() -> argparse.ArgumentParser:
     read = sub.add_parser("read", help="Read a workspace file without using the model.")
     read.add_argument("path")
 
+    read_range = sub.add_parser("range", help="Read a line range from a workspace file without loading the whole file.")
+    read_range.add_argument("path")
+    read_range.add_argument("start_line", type=int)
+    read_range.add_argument("end_line", type=int)
+
+    index = sub.add_parser("index", help="Build a compact project index with files, sizes, symbols, and imports.")
+    index.add_argument("path", nargs="?", default=".")
+
     write = sub.add_parser("write", help="Write a workspace file after CLI approval.")
     write.add_argument("path")
     write.add_argument("content", nargs="+", help="Text to write.")
@@ -349,8 +419,16 @@ def build_parser() -> argparse.ArgumentParser:
     delete = sub.add_parser("delete", help="Delete a workspace file after CLI approval.")
     delete.add_argument("path")
 
+    patch = sub.add_parser("patch", help="Replace one exact text block in a workspace file after CLI approval.")
+    patch.add_argument("path")
+    patch.add_argument("old_text")
+    patch.add_argument("new_text")
+
     shell = sub.add_parser("shell", help="Run a workspace shell command after CLI approval.")
     shell.add_argument("command", nargs="+", help="Command text.")
+
+    task = sub.add_parser("task", help="Create a deterministic plan/code/verify workflow for a larger coding task.")
+    task.add_argument("prompt", nargs="+", help="Task prompt, e.g. make a bouncing ball game.")
 
     return parser
 
@@ -373,12 +451,20 @@ def main() -> int:
             print_file_tree(args.api)
         elif args.command == "read":
             read_workspace_file(args.api, args.path)
+        elif args.command == "range":
+            read_workspace_range(args.api, args.path, args.start_line, args.end_line)
+        elif args.command == "index":
+            print_project_index(args.api, args.path)
         elif args.command == "write":
             write_workspace_file(args.api, args.path, " ".join(args.content))
         elif args.command == "delete":
             delete_workspace_file(args.api, args.path)
+        elif args.command == "patch":
+            patch_workspace_file(args.api, args.path, args.old_text, args.new_text)
         elif args.command == "shell":
             run_direct_shell(" ".join(args.command), args.api)
+        elif args.command == "task":
+            print_task_plan(args.api, " ".join(args.prompt))
         else:
             parser.print_help()
             return 1
@@ -393,6 +479,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
 
 
 

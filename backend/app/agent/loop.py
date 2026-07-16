@@ -100,6 +100,22 @@ def _extract_largest_fence(content: str) -> Optional[str]:
     matches = [m.group(1) for m in _FENCE_RE.finditer(content)]
     return max(matches, key=len) if matches else None
 
+_FILE_NAME_RE = re.compile(r"(?i)(?:file\s+(?:(?:named|called)\s+)?|[`'\"])([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)")
+_FILE_LABEL_RE = re.compile(r"(?im)^\s*(?:\*\*)?File\s*:\s*[`'\"]?([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)[`'\"]?")
+
+
+def _extract_candidate_file_path(*texts: str) -> Optional[str]:
+    for text in texts:
+        if not text:
+            continue
+        label = _FILE_LABEL_RE.search(text)
+        if label:
+            return label.group(1).strip()
+        for match in _FILE_NAME_RE.finditer(text):
+            candidate = match.group(1).strip("`'\". ")
+            if candidate and "." in candidate:
+                return candidate
+    return None
 
 class TurnStopped(Exception):
     pass
@@ -134,6 +150,7 @@ class AgentSession:
         self._turn_task: Optional[asyncio.Task] = None
         self._stop_requested = False
         self._last_file_path: Optional[str] = None
+        self._last_user_message = ""
         self._tools_enabled = True
         self._streamed_message_id: Optional[str] = None
         self.busy = False
@@ -226,6 +243,7 @@ class AgentSession:
     # ----------------------------------------------------------------- turn
 
     async def _run_turn(self, user_message: str, context_files: list[str]) -> None:
+        self._last_user_message = user_message
         self.conversation.append(
             {"role": "user", "content": "/no_think\n" + self._with_file_context(user_message, context_files)}
         )
@@ -306,13 +324,18 @@ class AgentSession:
                     tool_calls = [fallback]
                     content = ""
                 else:
+                    handled_as_edit = await self._maybe_offer_implicit_edit(content)
+                    if handled_as_edit:
+                        self.conversation.append(
+                            {"role": "assistant", "content": "I prepared a file edit for approval."}
+                        )
+                        return
                     self.conversation.append({"role": "assistant", "content": content})
                     event = {"type": "assistant_message", "content": content}
                     if self._streamed_message_id:
                         event["id"] = self._streamed_message_id
                         self._streamed_message_id = None
                     self._emit(event)
-                    await self._maybe_offer_implicit_edit(content)
                     return
 
             self.conversation.append(
@@ -417,6 +440,12 @@ class AgentSession:
                 return "Error: 'path' argument is required"
             self._last_file_path = path
             return tools.read_file(path)
+        if name == "read_file_range":
+            path = args.get("path")
+            if not path:
+                return "Error: 'path' argument is required"
+            self._last_file_path = path
+            return tools.read_file_range(path, int(args.get("start_line") or 1), int(args.get("end_line") or 200))
         if name == "search_files":
             query = args.get("query")
             if not query:
@@ -427,6 +456,8 @@ class AgentSession:
             if not query:
                 return "Error: 'query' argument is required"
             return tools.search_context(query)
+        if name == "project_index":
+            return tools.project_index(args.get("path") or ".")
         return f"Error: unknown tool '{name}'"
 
     async def _execute_with_approval(self, call_id: str, name: str, args: dict[str, Any]) -> str:
@@ -465,6 +496,30 @@ class AgentSession:
                 "diff": diff,
                 "is_new_file": is_new,
             }
+        elif name == "replace_in_file":
+            path = args.get("path")
+            old_text = args.get("old_text")
+            new_text = args.get("new_text")
+            if not path or old_text is None or new_text is None:
+                return "Error: replace_in_file requires 'path', 'old_text', and 'new_text'"
+            old_text = old_text if isinstance(old_text, str) else json.dumps(old_text, indent=2)
+            new_text = new_text if isinstance(new_text, str) else json.dumps(new_text, indent=2)
+            args = {**args, "old_text": old_text, "new_text": new_text}
+            try:
+                diff, is_new = tools.make_replace_diff(path, old_text, new_text)
+            except ValueError as exc:
+                return f"Error: {exc}"
+            if diff.startswith("Error:"):
+                return diff
+            self._last_file_path = path
+            request = {
+                "type": "approval_request",
+                "id": call_id,
+                "name": "write_file",
+                "path": path,
+                "diff": diff,
+                "is_new_file": is_new,
+            }
         else:
             return f"Error: unknown tool '{name}'"
 
@@ -472,7 +527,7 @@ class AgentSession:
         if not approved:
             return (
                 f"The user REJECTED this {name} call; it was not executed. Do not repeat the "
-                f"same call unchanged â€” try a different approach or ask the user how to proceed."
+                f"same call unchanged - try a different approach or ask the user how to proceed."
             )
 
         if name == "run_shell":
@@ -480,7 +535,10 @@ class AgentSession:
             self._emit({"type": "files_changed", "paths": []})
             return result
 
-        result = tools.write_file(args["path"], args["content"])
+        if name == "replace_in_file":
+            result = tools.replace_in_file(args["path"], args["old_text"], args["new_text"])
+        else:
+            result = tools.write_file(args["path"], args["content"])
         self._emit({"type": "files_changed", "paths": [args["path"]]})
         return result
 
@@ -497,25 +555,28 @@ class AgentSession:
 
     # ------------------------------------------------------------ fallbacks
 
-    async def _maybe_offer_implicit_edit(self, content: str) -> None:
-        """If the model dumped a whole file as a code fence instead of calling write_file,
-        surface it as a write_file approval so the edit isn't lost."""
-        if not self._last_file_path:
-            return
+    async def _maybe_offer_implicit_edit(self, content: str) -> bool:
+        """Turn a model-written code fence into a real approval-gated file edit.
+
+        Small local models sometimes say "File: x.py" and paste code instead of
+        calling write_file. When that happens, infer the file path and surface a
+        normal approval card so the user can approve or reject the actual write.
+        """
         fenced = _extract_largest_fence(content)
         if not fenced or not fenced.strip():
-            return
-        path = self._last_file_path
+            return False
+        path = self._last_file_path or _extract_candidate_file_path(content, self._last_user_message)
+        if not path:
+            return False
         try:
             current = tools.read_file(path)
         except Exception:
             current = ""
-        if fenced.strip() == current.strip():
-            return  # model just quoted the file back, not an edit
+        if not current.startswith("Error") and fenced.strip() == current.strip():
+            return False  # model just quoted the file back, not an edit
 
-        # Don't append a tool message to the conversation: there's no preceding tool_calls
-        # message, and some chat templates choke on orphaned tool results.
-        await self._execute_tool("write_file", {"path": path, "content": fenced})
+        await self._execute_tool("write_file", {"path": path, "content": fenced.rstrip() + "\n"})
+        return True
 
     def _check_stopped(self) -> None:
         if self._stop_requested:
@@ -553,6 +614,9 @@ def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
         "open",
         "list",
         "context",
+        "index",
+        "large",
+        "patch",
         "summarize",
         "explain",
         "project",
@@ -595,6 +659,14 @@ def _wants_workspace_context(user_message: str) -> bool:
         "find in",
     }
     return any(keyword in text for keyword in workspace_keywords)
+
+
+
+
+
+
+
+
 
 
 
