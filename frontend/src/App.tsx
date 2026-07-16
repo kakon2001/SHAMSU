@@ -256,7 +256,7 @@ function App() {
   return (
     <div className="app">
       <header className="app__header">
-        <span className="app__title">Local Coding Agent</span>
+        <span className="app__title">SHAMSU</span>
         <span className={`app__status app__status--${connected ? "on" : "off"}`}>
           {connected ? "connected" : "disconnected"}
         </span>
@@ -408,6 +408,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

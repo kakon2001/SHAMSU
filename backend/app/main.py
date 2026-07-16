@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     await db.close_db()
 
 
-app = FastAPI(title="Local Coding Agent", lifespan=lifespan)
+app = FastAPI(title="SHAMSU", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,6 +62,7 @@ async def health() -> dict[str, str]:
         "history_store": db.storage_mode(),
         "activity_log": str(settings.activity_log_file),
     }
+
 
 
 

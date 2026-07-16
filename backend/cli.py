@@ -1,4 +1,4 @@
-﻿"""Command-line client for the local coding agent backend.
+﻿"""Command-line client for the SHAMSU backend.
 
 The CLI talks to the same FastAPI session API used by the web frontend, so chat
 history, approvals, file edits, shell commands, and activity logs all stay in
@@ -414,7 +414,7 @@ def run_task_build(base: str, prompt: str) -> None:
     )
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="CLI for the local coding agent backend.")
+    parser = argparse.ArgumentParser(description="CLI for the SHAMSU backend.")
     parser.add_argument("--api", default=DEFAULT_API, help=f"Backend URL, default {DEFAULT_API}")
     sub = parser.add_subparsers(dest="command")
 
@@ -513,6 +513,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

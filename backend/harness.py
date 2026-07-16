@@ -1,4 +1,4 @@
-﻿"""Basic evaluation harness for the local coding agent.
+﻿"""Basic evaluation harness for the SHAMSU.
 
 Run this after starting the backend. It checks the API health, session
 creation, persisted activity endpoint, and CLI script availability. It is meant
@@ -139,6 +139,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

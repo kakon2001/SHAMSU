@@ -1,4 +1,4 @@
-# Product Requirements Document: Local Coding Agent
+﻿# Product Requirements Document: SHAMSU
 
 ## 1. Project Goal
 
@@ -8,7 +8,7 @@ Build a local Claude-like coding agent that can chat with a user, inspect worksp
 
 - Students or developers who want a local coding assistant.
 - Users who need file editing support without sending project files to third-party model APIs.
-- Faculty/evaluators reviewing a local agent system with backend, frontend, CLI, history, permissions, and tool support.
+- Faculty/evaluators reviewing a SHAMSU system with backend, frontend, CLI, history, permissions, and tool support.
 
 ## 3. Core Requirements
 
@@ -216,3 +216,4 @@ The demo is successful if:
 3. Expand MCP server integration and external client configuration.
 4. Validate on MacBook M4 Pro hardware.
 5. Add authentication.
+

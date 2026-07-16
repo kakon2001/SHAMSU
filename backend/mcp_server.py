@@ -1,4 +1,4 @@
-﻿"""Stdio MCP server for the local coding agent tools.
+﻿"""Stdio MCP server for the SHAMSU tools.
 
 The server exposes sandboxed workspace tools and read-only resources over a
 JSON-RPC/MCP-compatible stdio transport. It supports initialize, ping,
@@ -262,4 +262,5 @@ def _int_arg(args: dict[str, Any], key: str, default: int, minimum: int, maximum
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

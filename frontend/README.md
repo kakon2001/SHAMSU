@@ -1,4 +1,4 @@
-# Local Coding Agent
+﻿# SHAMSU
 
 A local web coding agent inspired by Claude-style workflows. The app runs a local Ollama model, lets the user chat with an agent, browse and edit files inside a sandboxed workspace, approve file/shell actions, and keep session/activity history.
 
@@ -92,3 +92,4 @@ Every event is also written as one JSON line in `logs/activity.log`.
 Generated files are ignored by the root `.gitignore`, including Python cache files, virtual environments, frontend builds, Node dependencies, logs, and local environment files.
 
 Do not commit `backend/.env`, `venv/`, `node_modules/`, `dist/`, or `__pycache__/`.
+

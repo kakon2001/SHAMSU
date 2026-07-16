@@ -1,4 +1,4 @@
-﻿# Local Coding Agent
+﻿# SHAMSU
 
 This project is a local Claude-style coding agent with a FastAPI backend and React frontend. It runs an Ollama model locally, works inside a sandboxed workspace, asks for approval before file writes or shell commands, and stores chat/activity history.
 
@@ -221,3 +221,4 @@ Example:
 ```powershell
 '{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | python mcp_server.py
 ```
+
