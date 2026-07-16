@@ -384,6 +384,35 @@ def print_task_plan(base: str, prompt: str) -> None:
         for note in plan["notes"]:
             print(f"- {note}")
 
+
+def run_task_build(base: str, prompt: str) -> None:
+    result = request("POST", api_url(base, "/api/tasks/run"), {"prompt": prompt, "preview": True, "overwrite": True})
+    print(f"Mode: {result['mode']}")
+    print(f"Goal: {result['goal']}")
+    print(f"Status: {'passed' if result['ok'] else 'needs manual follow-up'}")
+    print("\nBuild steps:")
+    for step in result.get("steps") or []:
+        print(f"- {step['name']}: {step['status']} - {step['detail']}")
+    if result.get("created_files"):
+        print("\nCreated files:")
+        for path in result["created_files"]:
+            print(f"- {path}")
+    if result.get("preview_url"):
+        print(f"\nPreview URL: {result['preview_url']}")
+    if result.get("notes"):
+        print("\nNotes:")
+        for note in result["notes"]:
+            print(f"- {note}")
+    log_cli_event(
+        base,
+        "build",
+        f"CLI autonomous build for: {prompt}",
+        target=prompt[:80],
+        ok=bool(result.get("ok")),
+        preview=result.get("preview_url") or "\n".join(step.get("detail", "") for step in result.get("steps") or []),
+        changed_paths=result.get("created_files") or [],
+    )
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI for the local coding agent backend.")
     parser.add_argument("--api", default=DEFAULT_API, help=f"Backend URL, default {DEFAULT_API}")
@@ -430,6 +459,9 @@ def build_parser() -> argparse.ArgumentParser:
     task = sub.add_parser("task", help="Create a deterministic plan/code/verify workflow for a larger coding task.")
     task.add_argument("prompt", nargs="+", help="Task prompt, e.g. make a bouncing ball game.")
 
+    build = sub.add_parser("build", help="Run the autonomous plan -> write -> verify -> preview loop when a safe template exists.")
+    build.add_argument("prompt", nargs="+", help="Task prompt, e.g. make a bouncing ball game.")
+
     return parser
 
 
@@ -465,6 +497,8 @@ def main() -> int:
             run_direct_shell(" ".join(args.command), args.api)
         elif args.command == "task":
             print_task_plan(args.api, " ".join(args.prompt))
+        elif args.command == "build":
+            run_task_build(args.api, " ".join(args.prompt))
         else:
             parser.print_help()
             return 1
@@ -479,6 +513,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

@@ -302,6 +302,24 @@ def test_preview_server_start_status_and_stop(backend_server: None) -> None:
     stopped = request("POST", "/api/preview/stop")
     assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
 
+def test_autonomous_task_run_creates_and_verifies_game(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "bouncing_ball.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "make a bouncing ball game", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "game-generator"
+    assert result["created_files"] == ["bouncing_ball.html"]
+    assert result["preview_url"] is None
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "<canvas" in content
+    assert "requestAnimationFrame" in content
+    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
+
 def test_task_plan_api_and_cli(backend_server: None) -> None:
     plan = request("POST", "/api/tasks/plan", {"prompt": "make a bouncing ball game"})
     assert plan["mode"] == "game-generator"
@@ -391,5 +409,6 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
 
 

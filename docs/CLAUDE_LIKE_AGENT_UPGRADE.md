@@ -4,6 +4,17 @@ This project is a local Claude/ChatGPT-style coding agent. It uses a local Ollam
 
 ## New Capabilities
 
+### Autonomous Build Loop
+
+The backend now has a conservative autonomous task runner for supported templates. It follows: plan -> write files -> verify -> start preview. In the web UI, type a prompt such as `make a bouncing ball game` and click **Auto Build**. In the CLI, run:
+
+```powershell
+python cli.py build "make a bouncing ball game"
+```
+
+Expected result: the workspace receives `bouncing_ball.html`, the backend verifies the canvas game structure, and a preview URL is returned.
+
+
 ### Large File Handler
 
 The agent should not paste a 100000-line file into the model context. Instead it can inspect a bounded range with `read_file_range`.
@@ -58,10 +69,11 @@ Expected result: a `game-generator` plan with a complete `bouncing_ball.html` fi
 
 This is not yet a fully autonomous Claude Code replacement. For very large or complex projects, the safest current workflow is:
 
-1. Use `python cli.py task "your task"` to get a plan.
+1. Use `python cli.py build "make a bouncing ball game"` for supported automatic builds, or `python cli.py task "your task"` to get a plan.
 2. Use `python cli.py index` to map the project.
 3. Use `python cli.py range <file> <start> <end>` to inspect relevant code.
 4. Use `python cli.py patch <file> <old_text> <new_text>` or the web approval flow for edits.
 5. Run the suggested verification command.
 
 The next major upgrade would be a full task executor that automatically loops through plan -> edit -> run -> verify while still asking approval for risky file and shell actions.
+
