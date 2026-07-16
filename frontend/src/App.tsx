@@ -179,7 +179,7 @@ function App() {
   );
   const sendOrBuild = useCallback((text: string, contextFiles: string[]) => {
     const lower = text.toLowerCase();
-    const shouldAutoBuild = contextFiles.length === 0 && /\b(game|bouncing|canvas|html page|web page)\b/.test(lower);
+    const shouldAutoBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|os|operating system)\b/.test(lower);
     if (shouldAutoBuild) {
       runAutoBuild(text);
       return;
@@ -408,6 +408,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

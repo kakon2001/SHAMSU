@@ -302,6 +302,33 @@ def test_preview_server_start_status_and_stop(backend_server: None) -> None:
     stopped = request("POST", "/api/preview/stop")
     assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
 
+def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
+    from app.routes.tasks import build_plan
+
+    plan = build_plan("make a snake game")
+    assert plan.mode == "json-generator-fallback"
+    assert plan.suggested_files == []
+    assert "JSON file generator" in " ".join(plan.notes)
+
+
+def test_generated_file_validation_rejects_unsafe_paths() -> None:
+    from app.routes.tasks import _validated_generated_files, TaskRunStep
+
+    steps: list[TaskRunStep] = []
+    files = _validated_generated_files(
+        {
+            "files": [
+                {"path": "snake.html", "content": "<html><script></script></html>"},
+                {"path": "../escape.py", "content": "print('bad')"},
+                {"path": "binary.exe", "content": "bad"},
+            ]
+        },
+        steps,
+    )
+
+    assert files == [{"path": "snake.html", "content": "<html><script></script></html>"}]
+    assert any("outside the workspace" in step.detail or "unsupported" in step.detail for step in steps)
+
 def test_autonomous_task_run_creates_and_verifies_game(backend_server: None, test_env: dict[str, str]) -> None:
     workspace = Path(test_env["AGENT_WORKDIR"])
     target = workspace / "bouncing_ball.html"
@@ -409,6 +436,7 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
 
 
 
