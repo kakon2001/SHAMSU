@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -131,3 +131,18 @@ export function getContextDashboard(): Promise<ContextDashboard> {
   return fetch(`${API_BASE}/api/context/dashboard`, { cache: "no-store" }).then((res) => handle<ContextDashboard>(res));
 }
 
+
+// ----------------------------------------------------------------- preview
+
+export function getPreviewStatus(path = "", port = 9000): Promise<PreviewState> {
+  const params = new URLSearchParams({ path, port: String(port) });
+  return fetch(`${API_BASE}/api/preview/status?${params.toString()}`, { cache: "no-store" }).then((res) => handle<PreviewState>(res));
+}
+
+export function startPreviewServer(path = "", port = 9000): Promise<PreviewState> {
+  return post("/api/preview/start", { path, port });
+}
+
+export function stopPreviewServer(): Promise<PreviewState> {
+  return post("/api/preview/stop");
+}

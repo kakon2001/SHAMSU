@@ -8,14 +8,17 @@ import {
   getFileContent,
   getFileTree,
   getModels,
+  getPreviewStatus,
   listSessions,
   saveFileContent,
+  startPreviewServer,
+  stopPreviewServer,
   setCurrentModel,
 } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
+import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, PreviewState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -35,6 +38,8 @@ function App() {
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [previewState, setPreviewState] = useState<PreviewState | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -71,6 +76,37 @@ function App() {
         setNotice(`Model switched to ${state.current}.`);
       })
       .catch((err: Error) => setNotice(err.message));
+  }, []);
+
+  const refreshPreview = useCallback((path = activePath ?? "") => {
+    getPreviewStatus(path)
+      .then(setPreviewState)
+      .catch(() => {
+        // Preview server is optional; no need to interrupt chat if it is offline.
+      });
+  }, [activePath]);
+
+  const startPreview = useCallback(() => {
+    setPreviewBusy(true);
+    startPreviewServer(activePath ?? "")
+      .then((state) => {
+        setPreviewState(state);
+        setNotice(state.message);
+        window.open(state.url, "_blank", "noopener,noreferrer");
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setPreviewBusy(false));
+  }, [activePath]);
+
+  const stopPreview = useCallback(() => {
+    setPreviewBusy(true);
+    stopPreviewServer()
+      .then((state) => {
+        setPreviewState(state);
+        setNotice(state.message);
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setPreviewBusy(false));
   }, []);
 
   useEffect(() => {
@@ -163,7 +199,8 @@ function App() {
   useEffect(() => {
     refreshModels();
     refreshDashboard();
-  }, [refreshDashboard, refreshModels]);
+    refreshPreview();
+  }, [refreshDashboard, refreshModels, refreshPreview]);
 
   
   // CLI-created sessions are recorded by the backend; poll so the browser catches them.
@@ -361,6 +398,30 @@ function App() {
             >
               {refreshingFiles ? "Refreshing" : "Refresh"}
             </button>
+            <button
+              className="workspace-panel__preview"
+              onClick={startPreview}
+              disabled={previewBusy}
+              title="Start workspace preview server and open the selected file"
+            >
+              {previewBusy ? "Previewing" : "Preview"}
+            </button>
+            {previewState?.running && (
+              <a
+                className="workspace-panel__preview-link"
+                href={previewState.url}
+                target="_blank"
+                rel="noreferrer"
+                title="Open current preview"
+              >
+                Open
+              </a>
+            )}
+            {previewState?.managed && (
+              <button className="workspace-panel__preview-stop" onClick={stopPreview} disabled={previewBusy}>
+                Stop
+              </button>
+            )}
           </div>
           <EditorPane
             tabs={tabs}
@@ -377,5 +438,7 @@ function App() {
 }
 
 export default App;
+
+
 
 

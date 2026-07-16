@@ -131,3 +131,12 @@ export interface ContextDashboard {
   largest_files: Array<{ path: string; chars: number; chunks: number; summary: string; top_terms: string[] }>;
   recent_uploads: Array<{ path: string; chars: number; chunks: number; summary: string; top_terms: string[] }>;
 }
+
+export interface PreviewState {
+  running: boolean;
+  managed: boolean;
+  port: number;
+  url: string;
+  path: string;
+  message: string;
+}

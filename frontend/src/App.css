@@ -182,6 +182,37 @@
 
 /* -------------------------------------------------------------- editor */
 
+
+.workspace-panel__preview,
+.workspace-panel__preview-link,
+.workspace-panel__preview-stop {
+  font-size: 13px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.workspace-panel__preview {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.workspace-panel__preview-link {
+  color: var(--add-text);
+  background: var(--add-bg);
+  border-color: transparent;
+}
+
+.workspace-panel__preview-stop {
+  color: var(--remove-text);
+  background: var(--remove-bg);
+  border-color: transparent;
+}
 .editor-pane {
   display: flex;
   flex-direction: column;
@@ -939,3 +970,4 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
