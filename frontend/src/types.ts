@@ -140,3 +140,19 @@ export interface PreviewState {
   path: string;
   message: string;
 }
+
+export interface TaskRunStep {
+  name: string;
+  status: string;
+  detail: string;
+}
+
+export interface TaskRunResponse {
+  goal: string;
+  mode: string;
+  ok: boolean;
+  created_files: string[];
+  preview_url: string | null;
+  steps: TaskRunStep[];
+  notes: string[];
+}

@@ -8,17 +8,15 @@ import {
   getFileContent,
   getFileTree,
   getModels,
-  getPreviewStatus,
   listSessions,
+  runTaskBuild,
   saveFileContent,
-  startPreviewServer,
-  stopPreviewServer,
   setCurrentModel,
 } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, PreviewState, SessionInfo } from "./types";
+import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -38,8 +36,7 @@ function App() {
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
   const [dashboardOpen, setDashboardOpen] = useState(false);
-  const [previewState, setPreviewState] = useState<PreviewState | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
+  const [, setAutoBuildBusy] = useState(false);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -78,36 +75,7 @@ function App() {
       .catch((err: Error) => setNotice(err.message));
   }, []);
 
-  const refreshPreview = useCallback((path = activePath ?? "") => {
-    getPreviewStatus(path)
-      .then(setPreviewState)
-      .catch(() => {
-        // Preview server is optional; no need to interrupt chat if it is offline.
-      });
-  }, [activePath]);
 
-  const startPreview = useCallback(() => {
-    setPreviewBusy(true);
-    startPreviewServer(activePath ?? "")
-      .then((state) => {
-        setPreviewState(state);
-        setNotice(state.message);
-        window.open(state.url, "_blank", "noopener,noreferrer");
-      })
-      .catch((err: Error) => setNotice(err.message))
-      .finally(() => setPreviewBusy(false));
-  }, [activePath]);
-
-  const stopPreview = useCallback(() => {
-    setPreviewBusy(true);
-    stopPreviewServer()
-      .then((state) => {
-        setPreviewState(state);
-        setNotice(state.message);
-      })
-      .catch((err: Error) => setNotice(err.message))
-      .finally(() => setPreviewBusy(false));
-  }, []);
 
   useEffect(() => {
     listSessions()
@@ -186,11 +154,38 @@ function App() {
     refreshDashboard();
   }, [refreshFileTree, reloadCleanTabs, refreshDashboard]);
 
+
+  const runAutoBuild = useCallback((prompt: string) => {
+    setAutoBuildBusy(true);
+    runTaskBuild(prompt)
+      .then((result) => {
+        void refreshFileTree();
+        reloadCleanTabs();
+        refreshDashboard();
+        if (result.preview_url) {
+          window.open(result.preview_url, "_blank", "noopener,noreferrer");
+        }
+        const fileText = result.created_files.length ? ` Created: ${result.created_files.join(", ")}.` : "";
+        setNotice(`${result.ok ? "Autonomous build completed." : "Autonomous build needs follow-up."}${fileText}`);
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setAutoBuildBusy(false));
+  }, [refreshDashboard, refreshFileTree, reloadCleanTabs]);
+
   const { items, connected, busy, sendChat, respondApproval, stop, reset } = useAgent(
     activeSessionId,
     handleFilesChanged,
     refreshSessions,
   );
+  const sendOrBuild = useCallback((text: string, contextFiles: string[]) => {
+    const lower = text.toLowerCase();
+    const shouldAutoBuild = contextFiles.length === 0 && /\b(game|bouncing|canvas|html page|web page)\b/.test(lower);
+    if (shouldAutoBuild) {
+      runAutoBuild(text);
+      return;
+    }
+    sendChat(text, contextFiles);
+  }, [runAutoBuild, sendChat]);
 
   useEffect(() => {
     void refreshFileTree();
@@ -199,8 +194,7 @@ function App() {
   useEffect(() => {
     refreshModels();
     refreshDashboard();
-    refreshPreview();
-  }, [refreshDashboard, refreshModels, refreshPreview]);
+  }, [refreshDashboard, refreshModels]);
 
   
   // CLI-created sessions are recorded by the backend; poll so the browser catches them.
@@ -363,7 +357,7 @@ function App() {
             connected={connected}
             files={workspaceFiles}
             activePath={activePath}
-            onSend={sendChat}
+            onSend={sendOrBuild}
             onStop={stop}
             onRespondApproval={respondApproval}
             onUploaded={() => {
@@ -398,30 +392,6 @@ function App() {
             >
               {refreshingFiles ? "Refreshing" : "Refresh"}
             </button>
-            <button
-              className="workspace-panel__preview"
-              onClick={startPreview}
-              disabled={previewBusy}
-              title="Start workspace preview server and open the selected file"
-            >
-              {previewBusy ? "Previewing" : "Preview"}
-            </button>
-            {previewState?.running && (
-              <a
-                className="workspace-panel__preview-link"
-                href={previewState.url}
-                target="_blank"
-                rel="noreferrer"
-                title="Open current preview"
-              >
-                Open
-              </a>
-            )}
-            {previewState?.managed && (
-              <button className="workspace-panel__preview-stop" onClick={stopPreview} disabled={previewBusy}>
-                Stop
-              </button>
-            )}
           </div>
           <EditorPane
             tabs={tabs}
@@ -438,6 +408,15 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
 
 
 

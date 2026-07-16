@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -145,4 +145,10 @@ export function startPreviewServer(path = "", port = 9000): Promise<PreviewState
 
 export function stopPreviewServer(): Promise<PreviewState> {
   return post("/api/preview/stop");
+}
+
+// -------------------------------------------------------------------- tasks
+
+export function runTaskBuild(prompt: string, preview = true): Promise<TaskRunResponse> {
+  return post("/api/tasks/run", { prompt, preview, overwrite: true });
 }
