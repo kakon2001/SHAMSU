@@ -335,10 +335,48 @@ def test_snake_game_template_run_creates_previewable_html(backend_server: None, 
     assert "ArrowUp" in content
     assert "setInterval" in content
 
+@pytest.mark.parametrize(
+    ("prompt", "file_name", "needles"),
+    [
+        ("make a pong game", "pong.html", ["Pong", "aiPaddle", "requestAnimationFrame"]),
+        ("make a tic tac toe game", "tic_tac_toe.html", ["Tic Tac Toe", "checkWinner", "board"]),
+        ("make a quiz app", "quiz_app.html", ["Quiz App", "questions", "showQuestion"]),
+        ("make a todo app", "todo_app.html", ["Todo App", "localStorage", "renderTodos"]),
+        ("make a calculator app", "calculator_app.html", ["Calculator", "appendDigit", "operator"]),
+    ],
+)
+def test_additional_autonomous_templates_run(backend_server: None, test_env: dict[str, str], prompt: str, file_name: str, needles: list[str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / file_name
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": prompt, "preview": False})
+
+    assert result["ok"] is True
+    assert result["created_files"] == [file_name]
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    for needle in needles:
+        assert needle in content
+    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
+
+
+def test_html_repair_wraps_malformed_generated_content() -> None:
+    from app.routes.tasks import _repair_html_content
+
+    repaired = _repair_html_content("demo_game.html", "const score = 0; document.body.textContent = score;")
+
+    assert repaired is not None
+    assert "<!doctype html>" in repaired
+    assert "<canvas" in repaired
+    assert "<script>" in repaired
+    assert "const score = 0" in repaired
+
 def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
     from app.routes.tasks import build_plan
 
-    plan = build_plan("make a quiz game")
+    plan = build_plan("make a maze game")
     assert plan.mode == "json-generator-fallback"
     assert plan.suggested_files == []
     assert "JSON file generator" in " ".join(plan.notes)
@@ -469,6 +507,7 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
 
 
 
