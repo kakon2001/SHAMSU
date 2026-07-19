@@ -72,27 +72,31 @@ def log_cli_event(
     risk_reason: str | None = None,
     changed_paths: list[str] | None = None,
 ) -> None:
-    session = create_session(base, title=f"CLI {action}: {target or path or command or 'action'}"[:60])
-    request(
-        "POST",
-        api_url(base, f"/api/sessions/{session['id']}/cli-event"),
-        {
-            "action": action,
-            "target": target,
-            "summary": summary,
-            "approved": approved,
-            "ok": ok,
-            "preview": preview,
-            "command": command,
-            "path": path,
-            "diff": diff,
-            "is_new_file": is_new_file,
-            "risk": risk,
-            "risk_reason": risk_reason,
-            "changed_paths": changed_paths or [],
-        },
-    )
-    print(f"[history] recorded in web session {session['id']}")
+    try:
+        session = request("POST", api_url(base, "/api/sessions"), {"title": f"CLI {action}: {target or path or command or 'action'}"[:60]}, timeout=8)
+        request(
+            "POST",
+            api_url(base, f"/api/sessions/{session['id']}/cli-event"),
+            {
+                "action": action,
+                "target": target,
+                "summary": summary,
+                "approved": approved,
+                "ok": ok,
+                "preview": preview,
+                "command": command,
+                "path": path,
+                "diff": diff,
+                "is_new_file": is_new_file,
+                "risk": risk,
+                "risk_reason": risk_reason,
+                "changed_paths": changed_paths or [],
+            },
+            timeout=8,
+        )
+        print(f"[history] recorded in web session {session['id']}")
+    except (RuntimeError, TimeoutError) as exc:
+        print(f"[history warning] {exc}", file=sys.stderr)
 
 def print_sessions(base: str) -> None:
     sessions = request("GET", api_url(base, "/api/sessions"))
@@ -502,7 +506,7 @@ def main() -> int:
         else:
             parser.print_help()
             return 1
-    except RuntimeError as exc:
+    except (RuntimeError, TimeoutError) as exc:
         print(exc, file=sys.stderr)
         return 2
     except KeyboardInterrupt:
@@ -513,11 +517,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
-
-
-
-
 
