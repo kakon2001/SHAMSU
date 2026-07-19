@@ -302,10 +302,43 @@ def test_preview_server_start_status_and_stop(backend_server: None) -> None:
     stopped = request("POST", "/api/preview/stop")
     assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
 
+def test_brick_breaker_template_run_creates_previewable_html(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "brick_breaker.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "make a brick breaker game", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "game-generator"
+    assert result["created_files"] == ["brick_breaker.html"]
+    content = target.read_text(encoding="utf-8")
+    assert "Brick Breaker" in content
+    assert "paddle" in content
+    assert "bricks" in content
+    assert "requestAnimationFrame" in content
+
+def test_snake_game_template_run_creates_previewable_html(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "snake_game.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "make a snake game in one html file", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "game-generator"
+    assert result["created_files"] == ["snake_game.html"]
+    content = target.read_text(encoding="utf-8")
+    assert "Snake Game" in content
+    assert "ArrowUp" in content
+    assert "setInterval" in content
+
 def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
     from app.routes.tasks import build_plan
 
-    plan = build_plan("make a snake game")
+    plan = build_plan("make a quiz game")
     assert plan.mode == "json-generator-fallback"
     assert plan.suggested_files == []
     assert "JSON file generator" in " ".join(plan.notes)
@@ -436,6 +469,9 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
+
+
 
 
 

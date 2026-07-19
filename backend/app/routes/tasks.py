@@ -120,6 +120,10 @@ async def run_task(body: TaskRunRequest) -> TaskRunResponse:
 def build_plan(prompt: str) -> TaskPlanResponse:
     prompt = prompt.strip()
     lower = prompt.lower()
+    if "brick" in lower and ("breaker" in lower or "game" in lower):
+        return _brick_breaker_plan(prompt)
+    if "snake" in lower and "game" in lower:
+        return _snake_game_plan(prompt)
     if "bouncing" in lower and "ball" in lower:
         return _bouncing_ball_plan(prompt)
     if any(word in lower for word in ["bug", "fix", "error", "traceback", "failing"]):
@@ -273,6 +277,272 @@ async def _maybe_start_preview(preview: bool, created_files: list[str], verify_o
     return preview_state.url
 
 
+
+
+def _brick_breaker_plan(prompt: str) -> TaskPlanResponse:
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Brick Breaker</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f172a;color:#f8fafc;font-family:Arial,sans-serif}
+    main{text-align:center} canvas{background:#f8fafc;border:3px solid #1e293b;box-shadow:0 16px 40px rgba(0,0,0,.35);outline:none}
+    .hud{display:flex;justify-content:center;gap:28px;margin:8px 0 14px;font-size:18px}.hint{color:#cbd5e1}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Brick Breaker</h1>
+    <div class="hud"><span>Score: <strong id="score">0</strong></span><span>Lives: <strong id="lives">3</strong></span></div>
+    <canvas id="game" width="640" height="420" tabindex="0"></canvas>
+    <p class="hint">Fixed version: use mouse or Left/Right arrows. Press Space to launch.</p>
+  </main>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const livesEl = document.getElementById('lives');
+    const paddle = { w: 104, h: 14, x: 268, y: 388, speed: 8 };
+    const ball = { x: 320, y: 360, r: 8, dx: 3.4, dy: -3.8, stuck: true };
+    const keys = { left: false, right: false };
+    const rows = 5, cols = 9, brickW = 58, brickH = 22, gap = 8, brickTop = 50, brickLeft = 26;
+    let bricks = [];
+    let score = 0;
+    let lives = 3;
+    let won = false;
+    let over = false;
+
+    function makeBricks() {
+      bricks = [];
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          bricks.push({ x: brickLeft + col * (brickW + gap), y: brickTop + row * (brickH + gap), alive: true, color: ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6'][row] });
+        }
+      }
+    }
+
+    function reset(full = true) {
+      if (full) { score = 0; lives = 3; won = false; over = false; makeBricks(); }
+      paddle.x = (canvas.width - paddle.w) / 2;
+      ball.x = paddle.x + paddle.w / 2;
+      ball.y = paddle.y - ball.r - 3;
+      ball.dx = 3.4 * (Math.random() > 0.5 ? 1 : -1);
+      ball.dy = -3.8;
+      ball.stuck = true;
+      scoreEl.textContent = score;
+      livesEl.textContent = lives;
+      draw();
+      canvas.focus();
+    }
+
+    function update() {
+      if (over || won) return;
+      if (keys.left) paddle.x -= paddle.speed;
+      if (keys.right) paddle.x += paddle.speed;
+      paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddle.x));
+      if (ball.stuck) { ball.x = paddle.x + paddle.w / 2; ball.y = paddle.y - ball.r - 3; return; }
+      ball.x += ball.dx; ball.y += ball.dy;
+      if (ball.x <= ball.r || ball.x >= canvas.width - ball.r) ball.dx *= -1;
+      if (ball.y <= ball.r) ball.dy *= -1;
+      if (ball.y > canvas.height + ball.r) {
+        lives -= 1;
+        livesEl.textContent = lives;
+        if (lives <= 0) over = true;
+        else reset(false);
+      }
+      const paddleHit = ball.y + ball.r >= paddle.y && ball.y - ball.r <= paddle.y + paddle.h && ball.x >= paddle.x && ball.x <= paddle.x + paddle.w;
+      if (paddleHit && ball.dy > 0) {
+        const hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+        ball.dx = hit * 5;
+        ball.dy = -Math.abs(ball.dy);
+      }
+      for (const brick of bricks) {
+        if (!brick.alive) continue;
+        const hitBrick = ball.x + ball.r > brick.x && ball.x - ball.r < brick.x + brickW && ball.y + ball.r > brick.y && ball.y - ball.r < brick.y + brickH;
+        if (hitBrick) {
+          brick.alive = false;
+          ball.dy *= -1;
+          score += 10;
+          scoreEl.textContent = score;
+          if (bricks.every(b => !b.alive)) won = true;
+          break;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (const brick of bricks) {
+        if (!brick.alive) continue;
+        ctx.fillStyle = brick.color;
+        ctx.fillRect(brick.x, brick.y, brickW, brickH);
+        ctx.strokeStyle = 'rgba(15,23,42,.22)';
+        ctx.strokeRect(brick.x, brick.y, brickW, brickH);
+      }
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fillStyle = '#7c3aed';
+      ctx.fill();
+      if (ball.stuck && !over && !won) message('Press Space to launch', 18);
+      if (over) message('Game Over - Press Space', 26);
+      if (won) message('You Win - Press Space', 26);
+    }
+
+    function message(text, size) {
+      ctx.fillStyle = 'rgba(15,23,42,.82)';
+      ctx.fillRect(0, 180, canvas.width, 58);
+      ctx.fillStyle = '#fff';
+      ctx.font = size + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(text, canvas.width / 2, 216);
+    }
+
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
+    function handleKey(event, pressed) {
+      if (['ArrowLeft', 'ArrowRight', 'Space'].includes(event.code) || ['ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault();
+      if (event.key === 'ArrowLeft') keys.left = pressed;
+      if (event.key === 'ArrowRight') keys.right = pressed;
+      if (pressed && event.code === 'Space') { if (over || won) reset(true); else ball.stuck = false; }
+    }
+    document.addEventListener('keydown', event => handleKey(event, true));
+    document.addEventListener('keyup', event => handleKey(event, false));
+    canvas.addEventListener('mousemove', event => {
+      const rect = canvas.getBoundingClientRect();
+      paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, event.clientX - rect.left - paddle.w / 2));
+      if (ball.stuck) { ball.x = paddle.x + paddle.w / 2; ball.y = paddle.y - ball.r - 3; }
+    });
+    canvas.addEventListener('click', () => canvas.focus());
+    reset(true);
+    loop();
+  </script>
+</body>
+</html>
+"""
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="game-generator",
+        steps=["Create a Brick Breaker HTML canvas game.", "Verify the HTML game structure.", "Start preview server."],
+        suggested_files=[{"path": "brick_breaker.html", "content": html}],
+        verify_commands=["Open http://127.0.0.1:9000/brick_breaker.html"],
+        notes=["This deterministic template is used for brick breaker prompts so demos do not depend on JSON fallback reliability."],
+    )
+def _snake_game_plan(prompt: str) -> TaskPlanResponse:
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Snake Game</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#f9fafb;font-family:Arial,sans-serif}
+    main{text-align:center} canvas{background:#f8fafc;border:3px solid #1f2937;outline:none}.score{font-size:20px;margin:8px 0 14px}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Snake Game</h1>
+    <div class="score">Score: <span id="score">0</span></div>
+    <canvas id="game" width="400" height="400" tabindex="0"></canvas>
+    <p>Use arrow keys to move. Press Space to restart after game over.</p>
+  </main>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const size = 20;
+    const cells = canvas.width / size;
+    let snake, food, direction, queuedDirection, score, gameOver, timer;
+
+    function reset() {
+      snake = [{ x: 8, y: 10 }, { x: 7, y: 10 }, { x: 6, y: 10 }];
+      food = { x: 14, y: 10 };
+      direction = { x: 1, y: 0 };
+      queuedDirection = { x: 1, y: 0 };
+      score = 0;
+      gameOver = false;
+      scoreEl.textContent = score;
+      draw();
+      canvas.focus();
+    }
+
+    function placeFood() {
+      do {
+        food = { x: Math.floor(Math.random() * cells), y: Math.floor(Math.random() * cells) };
+      } while (snake.some(part => part.x === food.x && part.y === food.y));
+    }
+
+    function step() {
+      if (gameOver) return draw();
+      direction = queuedDirection;
+      const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+      if (head.x < 0 || head.x >= cells || head.y < 0 || head.y >= cells || snake.some(part => part.x === head.x && part.y === head.y)) {
+        gameOver = true;
+        return draw();
+      }
+      snake.unshift(head);
+      if (head.x === food.x && head.y === food.y) {
+        score += 10;
+        scoreEl.textContent = score;
+        placeFood();
+      } else {
+        snake.pop();
+      }
+      draw();
+    }
+
+    function draw() {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(food.x * size, food.y * size, size, size);
+      snake.forEach((part, index) => {
+        ctx.fillStyle = index === 0 ? '#15803d' : '#22c55e';
+        ctx.fillRect(part.x * size + 1, part.y * size + 1, size - 2, size - 2);
+      });
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(17,24,39,0.82)';
+        ctx.fillRect(0, 160, canvas.width, 80);
+        ctx.fillStyle = '#fff';
+        ctx.font = '26px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Game Over', canvas.width / 2, 195);
+        ctx.font = '15px Arial';
+        ctx.fillText('Press Space to restart', canvas.width / 2, 222);
+      }
+    }
+
+    function setDirection(next) {
+      if (next.x + direction.x === 0 && next.y + direction.y === 0) return;
+      queuedDirection = next;
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) event.preventDefault();
+      if (event.key === 'ArrowUp') setDirection({ x: 0, y: -1 });
+      if (event.key === 'ArrowDown') setDirection({ x: 0, y: 1 });
+      if (event.key === 'ArrowLeft') setDirection({ x: -1, y: 0 });
+      if (event.key === 'ArrowRight') setDirection({ x: 1, y: 0 });
+      if (event.code === 'Space' && gameOver) reset();
+    });
+    canvas.addEventListener('click', () => canvas.focus());
+
+    reset();
+    timer = setInterval(step, 185);
+  </script>
+</body>
+</html>
+"""
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="game-generator",
+        steps=["Create a Snake HTML canvas game.", "Verify the HTML game structure.", "Start preview server."],
+        suggested_files=[{"path": "snake_game.html", "content": html}],
+        verify_commands=["Open http://127.0.0.1:9000/snake_game.html"],
+        notes=["This deterministic template is used for snake game prompts so demos do not depend on JSON fallback reliability."],
+    )
 def _bouncing_ball_plan(prompt: str) -> TaskPlanResponse:
     html = """<!doctype html>
 <html>
@@ -353,3 +623,10 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
+
+
+
+
+
+
