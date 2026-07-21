@@ -373,6 +373,48 @@ def test_html_repair_wraps_malformed_generated_content() -> None:
     assert "<script>" in repaired
     assert "const score = 0" in repaired
 
+def test_verification_feedback_reports_broken_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import tasks
+
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    (tmp_path / "broken.html").write_text("<html><body><script>function broken(){</script></body></html>", encoding="utf-8")
+
+    feedback = tasks._verification_feedback(["broken.html"])
+
+    assert any("braces look unbalanced" in item for item in feedback)
+
+
+def test_generic_repair_loop_uses_feedback_to_rewrite_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.routes import tasks
+
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    bad_file = {"path": "generic_game.html", "content": "<html><body><script>function broken(){</script></body></html>"}
+    fixed_file = {
+        "path": "generic_game.html",
+        "content": "<!doctype html><html><body><canvas id='game'></canvas><script>function loop(){requestAnimationFrame(loop);} loop();</script></body></html>",
+    }
+
+    async def fake_repair(prompt: str, current_files: list[dict[str, str]], feedback: list[str], steps: list[tasks.TaskRunStep], attempt: int) -> list[dict[str, str]]:
+        assert prompt == "make a random canvas game"
+        assert any("braces look unbalanced" in item for item in feedback)
+        steps.append(tasks.TaskRunStep(name="repair-generate", status="ok", detail="fake repair generated one file"))
+        return [fixed_file]
+
+    monkeypatch.setattr(tasks, "_generate_json_repair_plan", fake_repair)
+    plan = tasks._make_generated_plan("make a random canvas game", [bad_file])
+    steps: list[tasks.TaskRunStep] = []
+    created = tasks._write_suggested_files(plan, overwrite=True, steps=steps)
+
+    ok, repaired_plan, repaired_files = asyncio.run(tasks._verify_and_repair_loop("make a random canvas game", plan, created, steps))
+
+    assert ok is True
+    assert repaired_plan.mode == "json-repaired-task"
+    assert repaired_files == ["generic_game.html"]
+    assert "requestAnimationFrame" in (tmp_path / "generic_game.html").read_text(encoding="utf-8")
+    assert any(step.name == "feedback" for step in steps)
+    assert any(step.name == "repair-generate" for step in steps)
+
 def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
     from app.routes.tasks import build_plan
 
@@ -507,11 +549,4 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
-
-
-
-
-
-
-
 
