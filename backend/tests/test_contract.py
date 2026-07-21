@@ -154,6 +154,38 @@ def test_context_summary_dashboard_and_search(backend_server: None) -> None:
     assert isinstance(search["matches"], list)
 
 
+def test_large_file_edit_workflow_plans_ranges_and_verification(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    large_file = workspace / "large_module.py"
+    lines = ["def helper():", "    return 'helper'", ""]
+    lines.extend(f"# filler {index}" for index in range(1, 1100))
+    lines.extend(["", "def calculate_total(items):", "    return sum(items)"])
+    large_file.write_text("\n".join(lines), encoding="utf-8")
+    (workspace / "ui.tsx").write_text("export function TotalView(){ return <div>total</div>; }\n", encoding="utf-8")
+
+    result = request(
+        "POST",
+        "/api/workflows/edit-plan",
+        {"prompt": "fix calculate_total in large_module.py and update UI", "query": "calculate_total|TotalView"},
+    )
+
+    paths = [item["path"] for item in result["relevant_files"]]
+    assert "large_module.py" in paths
+    assert any(item["path"] == "large_module.py" and item["large"] for item in result["relevant_files"])
+    assert any(window["path"] == "large_module.py" and window["start_line"] < 1110 for window in result["range_windows"])
+    assert any(item["path"] == "large_module.py" and item["tool"] == "replace_in_file" for item in result["patch_plan"])
+    assert "python -m py_compile <changed_file.py>" in result["verification_commands"]
+    assert "npm run build" in result["verification_commands"]
+    assert any("bounded range reads" in item for item in result["impact_summary"])
+
+
+def test_large_file_edit_workflow_handles_no_match(backend_server: None) -> None:
+    result = request("POST", "/api/workflows/edit-plan", {"prompt": "review unknown subsystem", "query": "definitely_missing_symbol"})
+
+    assert result["goal"] == "review unknown subsystem"
+    assert "Indexed" in result["index_summary"]
+    assert result["next_steps"]
+
 def test_model_list_and_switch_validation(backend_server: None) -> None:
     state = request("GET", "/api/models")
     model_ids = [model["id"] for model in state["models"]]
