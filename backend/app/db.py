@@ -1,13 +1,16 @@
-"""Persistence for chat sessions.
+﻿"""Persistence for chat sessions.
 
 MySQL is used when it is available. If it is not available, the app falls back
 to a local SQLite file so session history still survives backend restarts.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import secrets
 import sqlite3
+import uuid
 import warnings
 from datetime import datetime
 from typing import Any, Optional
@@ -28,7 +31,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     conversation LONGTEXT NOT NULL,
     events LONGTEXT NOT NULL,
     created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
+    updated_at DATETIME NOT NULL,
+    owner_id VARCHAR(64) NOT NULL DEFAULT 'local'
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 """
 
@@ -39,10 +43,49 @@ CREATE TABLE IF NOT EXISTS sessions (
     conversation TEXT NOT NULL,
     events TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    owner_id TEXT NOT NULL DEFAULT 'local'
 )
 """
 
+_MYSQL_USERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id CHAR(32) NOT NULL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at DATETIME NOT NULL
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+"""
+
+_MYSQL_TOKENS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    token CHAR(64) NOT NULL PRIMARY KEY,
+    user_id CHAR(32) NOT NULL,
+    created_at DATETIME NOT NULL,
+    expires_at DATETIME NOT NULL,
+    INDEX (user_id)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+"""
+
+_SQLITE_USERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT NOT NULL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+"""
+
+_SQLITE_TOKENS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    token TEXT NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+)
+"""
 
 def is_available() -> bool:
     return _pool is not None or _sqlite_ready
@@ -83,12 +126,17 @@ def _sqlite_connect() -> sqlite3.Connection:
 def _init_sqlite_sync() -> None:
     with _sqlite_connect() as conn:
         conn.execute(_SQLITE_SCHEMA)
+        conn.execute(_SQLITE_USERS_SCHEMA)
+        conn.execute(_SQLITE_TOKENS_SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "owner_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local'")
 
 
 def _load_sqlite_sync() -> list[dict[str, Any]]:
     with _sqlite_connect() as conn:
         rows = conn.execute(
-            "SELECT id, title, conversation, events, created_at, updated_at "
+            "SELECT id, title, conversation, events, created_at, updated_at, owner_id "
             "FROM sessions ORDER BY updated_at DESC"
         ).fetchall()
     sessions: list[dict[str, Any]] = []
@@ -106,14 +154,15 @@ def _save_sqlite_sync(
     events: list[dict[str, Any]],
     created_at: datetime,
     updated_at: datetime,
+    owner_id: str = "local",
 ) -> None:
     with _sqlite_connect() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, title, conversation, events, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO sessions (id, title, conversation, events, created_at, updated_at, owner_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET title = excluded.title, "
             "conversation = excluded.conversation, events = excluded.events, "
-            "updated_at = excluded.updated_at",
+            "updated_at = excluded.updated_at, owner_id = excluded.owner_id",
             (
                 session_id,
                 title,
@@ -121,9 +170,9 @@ def _save_sqlite_sync(
                 json.dumps(events, ensure_ascii=False, default=str),
                 created_at.isoformat(),
                 updated_at.isoformat(),
+                owner_id,
             ),
         )
-
 
 def _delete_sqlite_sync(session_id: str) -> None:
     with _sqlite_connect() as conn:
@@ -174,6 +223,12 @@ async def init_db() -> None:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     await cur.execute(_MYSQL_SCHEMA)
+                    await cur.execute(_MYSQL_USERS_SCHEMA)
+                    await cur.execute(_MYSQL_TOKENS_SCHEMA)
+                    try:
+                        await cur.execute("ALTER TABLE sessions ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'local'")
+                    except Exception:
+                        pass
         log.info("MySQL connected; sessions persist to database '%s'", settings.mysql_database)
     except Exception as exc:
         _pool = None
@@ -209,7 +264,7 @@ async def load_sessions() -> list[dict[str, Any]]:
         async with _pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
-                    "SELECT id, title, conversation, events, created_at, updated_at "
+                    "SELECT id, title, conversation, events, created_at, updated_at, owner_id "
                     "FROM sessions ORDER BY updated_at DESC"
                 )
                 rows = await cur.fetchall()
@@ -231,6 +286,7 @@ async def save_session(
     events: list[dict[str, Any]],
     created_at: datetime,
     updated_at: datetime,
+    owner_id: str = "local",
 ) -> None:
     if _pool is None:
         if _sqlite_ready:
@@ -243,6 +299,7 @@ async def save_session(
                     events,
                     created_at,
                     updated_at,
+                    owner_id,
                 )
             except Exception as exc:
                 log.warning("Failed to save session %s to SQLite: %s", session_id, exc)
@@ -252,11 +309,11 @@ async def save_session(
         async with _pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO sessions (id, title, conversation, events, created_at, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) "
+                    "INSERT INTO sessions (id, title, conversation, events, created_at, updated_at, owner_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
                     "ON DUPLICATE KEY UPDATE title = VALUES(title), "
                     "conversation = VALUES(conversation), events = VALUES(events), "
-                    "updated_at = VALUES(updated_at)",
+                    "updated_at = VALUES(updated_at), owner_id = VALUES(owner_id)",
                     (
                         session_id,
                         title,
@@ -264,11 +321,144 @@ async def save_session(
                         json.dumps(events, ensure_ascii=False, default=str),
                         created_at,
                         updated_at,
+                        owner_id,
                     ),
                 )
     except Exception as exc:
         log.warning("Failed to save session %s to MySQL: %s", session_id, exc)
+def _hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000).hex()
+    return f"pbkdf2_sha256${salt}${digest}"
 
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, salt, digest = stored.split("$", 2)
+    except ValueError:
+        return False
+    if scheme != "pbkdf2_sha256":
+        return False
+    expected = _hash_password(password, salt).split("$", 2)[-1]
+    return secrets.compare_digest(expected, digest)
+
+
+def _sqlite_create_user_sync(email: str, password: str, name: str) -> dict[str, Any]:
+    user_id = uuid.uuid4().hex
+    now = datetime.utcnow().isoformat()
+    display_name = name or email.split("@", 1)[0]
+    try:
+        with _sqlite_connect() as conn:
+            conn.execute(
+                "INSERT INTO users (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, email, display_name, _hash_password(password), now),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("Email is already registered") from exc
+    return {"id": user_id, "email": email, "name": display_name}
+
+
+def _sqlite_get_user_by_email_sync(email: str) -> dict[str, Any] | None:
+    with _sqlite_connect() as conn:
+        row = conn.execute("SELECT id, email, name, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
+
+
+def _sqlite_create_token_sync(user_id: str, token: str, expires_at: datetime) -> None:
+    with _sqlite_connect() as conn:
+        conn.execute(
+            "INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token, user_id, datetime.utcnow().isoformat(), expires_at.isoformat()),
+        )
+
+
+def _sqlite_get_user_by_token_sync(token: str) -> dict[str, Any] | None:
+    now = datetime.utcnow().isoformat()
+    with _sqlite_connect() as conn:
+        row = conn.execute(
+            "SELECT users.id, users.email, users.name FROM auth_tokens JOIN users ON users.id = auth_tokens.user_id WHERE auth_tokens.token = ? AND auth_tokens.expires_at > ?",
+            (token, now),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _sqlite_revoke_token_sync(token: str) -> None:
+    with _sqlite_connect() as conn:
+        conn.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
+
+
+async def create_user(email: str, password: str, name: str = "") -> dict[str, Any]:
+    if _pool is None:
+        if not _sqlite_ready:
+            raise RuntimeError("Database is not available")
+        return await asyncio.to_thread(_sqlite_create_user_sync, email, password, name)
+    user_id = uuid.uuid4().hex
+    display_name = name or email.split("@", 1)[0]
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO users (id, email, name, password_hash, created_at) VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, email, display_name, _hash_password(password), datetime.utcnow()),
+                )
+    except Exception as exc:
+        raise ValueError("Email is already registered") from exc
+    return {"id": user_id, "email": email, "name": display_name}
+
+
+async def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
+    if _pool is None:
+        if not _sqlite_ready:
+            return None
+        row = await asyncio.to_thread(_sqlite_get_user_by_email_sync, email)
+    else:
+        async with _pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("SELECT id, email, name, password_hash FROM users WHERE email = %s", (email,))
+                row = await cur.fetchone()
+    if not row or not _verify_password(password, row["password_hash"]):
+        return None
+    return {"id": row["id"], "email": row["email"], "name": row["name"]}
+
+
+async def create_auth_token(user_id: str, expires_at: datetime) -> str:
+    token = secrets.token_hex(32)
+    if _pool is None:
+        if not _sqlite_ready:
+            raise RuntimeError("Database is not available")
+        await asyncio.to_thread(_sqlite_create_token_sync, user_id, token, expires_at)
+        return token
+    async with _pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (%s, %s, %s, %s)",
+                (token, user_id, datetime.utcnow(), expires_at),
+            )
+    return token
+
+
+async def get_user_by_token(token: str) -> dict[str, Any] | None:
+    if _pool is None:
+        if not _sqlite_ready:
+            return None
+        return await asyncio.to_thread(_sqlite_get_user_by_token_sync, token)
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT users.id, users.email, users.name FROM auth_tokens JOIN users ON users.id = auth_tokens.user_id WHERE auth_tokens.token = %s AND auth_tokens.expires_at > %s",
+                (token, datetime.utcnow()),
+            )
+            return await cur.fetchone()
+
+
+async def revoke_auth_token(token: str) -> None:
+    if _pool is None:
+        if _sqlite_ready:
+            await asyncio.to_thread(_sqlite_revoke_token_sync, token)
+        return
+    async with _pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM auth_tokens WHERE token = %s", (token,))
 
 async def delete_session(session_id: str) -> None:
     if _pool is None:
@@ -285,3 +475,12 @@ async def delete_session(session_id: str) -> None:
                 await cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
     except Exception as exc:
         log.warning("Failed to delete session %s from MySQL: %s", session_id, exc)
+
+
+
+
+
+
+
+
+

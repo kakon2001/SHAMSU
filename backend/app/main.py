@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db, model_registry
 from .agent.session_manager import manager
 from .config import settings
-from .routes import admin, agent, context, files, models, preview, tasks, uploads, workflows
+from .routes import admin, agent, auth, context, files, models, preview, tasks, uploads, workflows
 
 
 def configure_activity_logging() -> None:
@@ -43,6 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(agent.router)
 app.include_router(context.router)
@@ -63,6 +64,7 @@ async def health() -> dict[str, str]:
         "history_store": db.storage_mode(),
         "activity_log": str(settings.activity_log_file),
     }
+
 
 
 
