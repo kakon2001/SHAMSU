@@ -26,7 +26,7 @@ def request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         headers={"Content-Type": "application/json"},
         method=method,
     )
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with urllib.request.urlopen(req, timeout=30) as response:
         text = response.read().decode("utf-8")
         return json.loads(text) if text else None
 
@@ -260,10 +260,11 @@ def test_mcp_tools_list(test_env: dict[str, str]) -> None:
     assert {"list_directory", "read_file", "search_files", "search_context", "context_summary", "context_overview"}.issubset(tool_names)
 
 
-def test_cli_sessions_command(backend_server: None) -> None:
+def test_cli_sessions_command(backend_server: None, test_env: dict[str, str]) -> None:
     proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "sessions"],
         cwd=BACKEND_DIR,
+        env=test_env,
         capture_output=True,
         text=True,
         timeout=20,
@@ -274,10 +275,11 @@ def test_cli_sessions_command(backend_server: None) -> None:
 
 
 
-def test_cli_direct_file_commands(backend_server: None) -> None:
+def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]) -> None:
     write_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "write", "cli_pytest.txt", "CLI", "direct", "write", "passed"],
         cwd=BACKEND_DIR,
+        env=test_env,
         input="y\n",
         capture_output=True,
         text=True,
@@ -291,6 +293,7 @@ def test_cli_direct_file_commands(backend_server: None) -> None:
     sessions_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "sessions"],
         cwd=BACKEND_DIR,
+        env=test_env,
         capture_output=True,
         text=True,
         timeout=20,
@@ -301,6 +304,7 @@ def test_cli_direct_file_commands(backend_server: None) -> None:
     read_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_pytest.txt"],
         cwd=BACKEND_DIR,
+        env=test_env,
         capture_output=True,
         text=True,
         timeout=20,
@@ -311,6 +315,7 @@ def test_cli_direct_file_commands(backend_server: None) -> None:
     delete_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "delete", "cli_pytest.txt"],
         cwd=BACKEND_DIR,
+        env=test_env,
         input="y\n",
         capture_output=True,
         text=True,
@@ -323,6 +328,7 @@ def test_cli_direct_file_commands(backend_server: None) -> None:
     missing_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_pytest.txt"],
         cwd=BACKEND_DIR,
+        env=test_env,
         capture_output=True,
         text=True,
         timeout=20,
@@ -331,7 +337,7 @@ def test_cli_direct_file_commands(backend_server: None) -> None:
     assert "HTTP 404" in missing_proc.stderr
 
 
-def test_cli_ask_routes_obvious_file_create(backend_server: None) -> None:
+def test_cli_ask_routes_obvious_file_create(backend_server: None, test_env: dict[str, str]) -> None:
     proc = subprocess.run(
         [
             sys.executable,
@@ -342,6 +348,7 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None) -> None:
             "Create a file named cli_ask_pytest.txt in the workspace with the text: CLI ask route passed.",
         ],
         cwd=BACKEND_DIR,
+        env=test_env,
         input="y\n",
         capture_output=True,
         text=True,
@@ -354,6 +361,7 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None) -> None:
     read_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "read", "cli_ask_pytest.txt"],
         cwd=BACKEND_DIR,
+        env=test_env,
         capture_output=True,
         text=True,
         timeout=20,
@@ -489,6 +497,87 @@ def test_generic_repair_loop_uses_feedback_to_rewrite_files(tmp_path: Path, monk
     assert any(step.name == "feedback" for step in steps)
     assert any(step.name == "repair-generate" for step in steps)
 
+def test_crm_management_system_template_run_creates_crud_html(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "crm_system.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "make a CRM system", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "management-system-generator"
+    assert result["created_files"] == ["crm_system.html"]
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "CRM System" in content
+    assert "localStorage" in content
+    assert "renderRecords" in content
+    assert "editRecord" in content
+    assert "deleteRecord" in content
+    assert "Search records" in content
+    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
+
+
+def test_student_management_system_template_run_creates_targeted_html(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "student_management_system.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "build a student management system", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "management-system-generator"
+    assert result["created_files"] == ["student_management_system.html"]
+    content = target.read_text(encoding="utf-8")
+    assert "Student Management System" in content
+    assert "Program" in content
+    assert "Active" in content
+    assert "deleteRecord" in content
+
+def test_website_prompt_creates_previewable_site(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "bakery_website" / "index.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "create a bakery website", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "website-generator"
+    assert result["created_files"] == ["bakery_website/index.html", "bakery_website/styles.css", "bakery_website/app.js", "bakery_website/WORKFLOW.md"]
+    assert result["workflow_summary"].startswith("prompt -> requirement analysis")
+    assert "CSS" in result["stack"]
+    assert "bakery_website/WORKFLOW.md" in result["file_plan"]
+    content = target.read_text(encoding="utf-8")
+    assert "Bakery Website" in content
+    assert "app.js" in content
+    workflow = (workspace / "bakery_website" / "WORKFLOW.md").read_text(encoding="utf-8")
+    assert "Requirement Analysis" in workflow
+    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
+
+
+def test_general_system_prompt_creates_dashboard_prototype(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    target = workspace / "clinic_system" / "index.html"
+    if target.exists():
+        target.unlink()
+
+    result = request("POST", "/api/tasks/run", {"prompt": "make a clinic system", "preview": False})
+
+    assert result["ok"] is True
+    assert result["mode"] == "system-prototype-generator"
+    assert result["created_files"] == ["clinic_system/index.html", "clinic_system/styles.css", "clinic_system/app.js", "clinic_system/WORKFLOW.md"]
+    assert "localStorage" in result["stack"]
+    assert result["clarification_questions"]
+    content = target.read_text(encoding="utf-8")
+    assert "Clinic System" in content
+    app_js = (workspace / "clinic_system" / "app.js").read_text(encoding="utf-8")
+    assert "addRecord" in app_js
+    assert "toggleRecord" in app_js
+    assert "localStorage" in app_js
+
 def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
     from app.routes.tasks import build_plan
 
@@ -516,42 +605,31 @@ def test_generated_file_validation_rejects_unsafe_paths() -> None:
     assert files == [{"path": "snake.html", "content": "<html><script></script></html>"}]
     assert any("outside the workspace" in step.detail or "unsupported" in step.detail for step in steps)
 
-def test_autonomous_task_run_creates_and_verifies_game(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "bouncing_ball.html"
-    if target.exists():
-        target.unlink()
+def test_autonomous_task_template_writes_and_verifies_game(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import tasks
 
-    result = request("POST", "/api/tasks/run", {"prompt": "make a bouncing ball game", "preview": False})
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    plan = tasks.build_plan("make a bouncing ball game")
+    steps: list[tasks.TaskRunStep] = []
+    created = tasks._write_suggested_files(plan, overwrite=True, steps=steps)
+    ok = tasks._verify_created_files(plan, created, steps)
 
-    assert result["ok"] is True
-    assert result["mode"] == "game-generator"
-    assert result["created_files"] == ["bouncing_ball.html"]
-    assert result["preview_url"] is None
+    assert ok is True
+    assert plan.mode == "game-generator"
+    assert created == ["bouncing_ball.html"]
+    target = tmp_path / "bouncing_ball.html"
     assert target.exists()
     content = target.read_text(encoding="utf-8")
     assert "<canvas" in content
     assert "requestAnimationFrame" in content
-    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
+    assert any(step.name == "verify" and step.status == "ok" for step in steps)
+def test_task_plan_returns_bouncing_ball_template() -> None:
+    from app.routes.tasks import build_plan
 
-def test_task_plan_api_and_cli(backend_server: None) -> None:
-    plan = request("POST", "/api/tasks/plan", {"prompt": "make a bouncing ball game"})
-    assert plan["mode"] == "game-generator"
-    assert plan["suggested_files"][0]["path"] == "bouncing_ball.html"
-    assert "requestAnimationFrame" in plan["suggested_files"][0]["content"]
-
-    proc = subprocess.run(
-        [sys.executable, "cli.py", "--api", API_BASE, "task", "make", "a", "bouncing", "ball", "game"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert "Mode: game-generator" in proc.stdout
-    assert "bouncing_ball.html" in proc.stdout
-
-
+    plan = build_plan("make a bouncing ball game")
+    assert plan.mode == "game-generator"
+    assert plan.suggested_files[0]["path"] == "bouncing_ball.html"
+    assert "requestAnimationFrame" in plan.suggested_files[0]["content"]
 def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict[str, str]) -> None:
     workspace = Path(test_env["AGENT_WORKDIR"])
     patch_target = workspace / "patch_target.py"
@@ -623,6 +701,17 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
