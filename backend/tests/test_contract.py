@@ -103,6 +103,45 @@ def backend_server(test_env: dict[str, str]) -> None:
             proc.wait(timeout=5)
 
 
+def test_email_auth_and_user_session_isolation(backend_server: None) -> None:
+    first = request(
+        "POST",
+        "/api/auth/register",
+        {"email": "first@example.com", "password": "secret123", "name": "First User"},
+    )
+    second = request(
+        "POST",
+        "/api/auth/register",
+        {"email": "second@example.com", "password": "secret123", "name": "Second User"},
+    )
+
+    assert first["user"]["email"] == "first@example.com"
+    assert second["user"]["email"] == "second@example.com"
+
+    def authed(method: str, path: str, token: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    session = authed("POST", "/api/sessions", first["token"], {"title": "private first session"})
+    first_sessions = authed("GET", "/api/sessions", first["token"])
+    second_sessions = authed("GET", "/api/sessions", second["token"])
+
+    assert any(item["id"] == session["id"] for item in first_sessions)
+    assert all(item["id"] != session["id"] for item in second_sessions)
+
+    logged_in = request("POST", "/api/auth/login", {"email": "first@example.com", "password": "secret123"})
+    assert logged_in["user"]["email"] == "first@example.com"
+    logout = authed("POST", "/api/auth/logout", logged_in["token"])
+    assert logout == {"ok": True}
+
 def test_health_reports_model_and_history_store(backend_server: None) -> None:
     health = request("GET", "/api/health")
 
@@ -384,38 +423,41 @@ def test_preview_server_start_status_and_stop(backend_server: None) -> None:
     stopped = request("POST", "/api/preview/stop")
     assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
 
-def test_brick_breaker_template_run_creates_previewable_html(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "brick_breaker.html"
-    if target.exists():
-        target.unlink()
+def _write_and_verify_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str) -> tuple[Any, list[str], list[Any]]:
+    from app.routes import tasks
 
-    result = request("POST", "/api/tasks/run", {"prompt": "make a brick breaker game", "preview": False})
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    plan = tasks.build_plan(prompt)
+    steps: list[tasks.TaskRunStep] = []
+    created = tasks._write_suggested_files(plan, overwrite=True, steps=steps)
+    ok = tasks._verify_created_files(plan, created, steps)
+    assert ok is True
+    assert any(step.name == "verify" and step.status == "ok" for step in steps)
+    return plan, created, steps
 
-    assert result["ok"] is True
-    assert result["mode"] == "game-generator"
-    assert result["created_files"] == ["brick_breaker.html"]
-    content = target.read_text(encoding="utf-8")
+
+def test_brick_breaker_template_run_creates_previewable_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a brick breaker game")
+
+    assert plan.mode == "game-generator"
+    assert created == ["brick_breaker.html"]
+    content = (tmp_path / "brick_breaker.html").read_text(encoding="utf-8")
     assert "Brick Breaker" in content
     assert "paddle" in content
     assert "bricks" in content
     assert "requestAnimationFrame" in content
 
-def test_snake_game_template_run_creates_previewable_html(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "snake_game.html"
-    if target.exists():
-        target.unlink()
 
-    result = request("POST", "/api/tasks/run", {"prompt": "make a snake game in one html file", "preview": False})
+def test_snake_game_template_run_creates_previewable_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a snake game in one html file")
 
-    assert result["ok"] is True
-    assert result["mode"] == "game-generator"
-    assert result["created_files"] == ["snake_game.html"]
-    content = target.read_text(encoding="utf-8")
+    assert plan.mode == "game-generator"
+    assert created == ["snake_game.html"]
+    content = (tmp_path / "snake_game.html").read_text(encoding="utf-8")
     assert "Snake Game" in content
     assert "ArrowUp" in content
     assert "setInterval" in content
+
 
 @pytest.mark.parametrize(
     ("prompt", "file_name", "needles"),
@@ -427,22 +469,13 @@ def test_snake_game_template_run_creates_previewable_html(backend_server: None, 
         ("make a calculator app", "calculator_app.html", ["Calculator", "appendDigit", "operator"]),
     ],
 )
-def test_additional_autonomous_templates_run(backend_server: None, test_env: dict[str, str], prompt: str, file_name: str, needles: list[str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / file_name
-    if target.exists():
-        target.unlink()
+def test_additional_autonomous_templates_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str, file_name: str, needles: list[str]) -> None:
+    _, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, prompt)
 
-    result = request("POST", "/api/tasks/run", {"prompt": prompt, "preview": False})
-
-    assert result["ok"] is True
-    assert result["created_files"] == [file_name]
-    assert target.exists()
-    content = target.read_text(encoding="utf-8")
+    assert created == [file_name]
+    content = (tmp_path / file_name).read_text(encoding="utf-8")
     for needle in needles:
         assert needle in content
-    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
-
 
 def test_html_repair_wraps_malformed_generated_content() -> None:
     from app.routes.tasks import _repair_html_content
@@ -497,83 +530,57 @@ def test_generic_repair_loop_uses_feedback_to_rewrite_files(tmp_path: Path, monk
     assert any(step.name == "feedback" for step in steps)
     assert any(step.name == "repair-generate" for step in steps)
 
-def test_crm_management_system_template_run_creates_crud_html(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "crm_system.html"
-    if target.exists():
-        target.unlink()
+def test_crm_management_system_template_run_creates_crud_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a CRM system")
 
-    result = request("POST", "/api/tasks/run", {"prompt": "make a CRM system", "preview": False})
-
-    assert result["ok"] is True
-    assert result["mode"] == "management-system-generator"
-    assert result["created_files"] == ["crm_system.html"]
-    assert target.exists()
-    content = target.read_text(encoding="utf-8")
+    assert plan.mode == "management-system-generator"
+    assert created == ["crm_system.html"]
+    content = (tmp_path / "crm_system.html").read_text(encoding="utf-8")
     assert "CRM System" in content
     assert "localStorage" in content
     assert "renderRecords" in content
     assert "editRecord" in content
     assert "deleteRecord" in content
     assert "Search records" in content
-    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
 
 
-def test_student_management_system_template_run_creates_targeted_html(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "student_management_system.html"
-    if target.exists():
-        target.unlink()
+def test_student_management_system_template_run_creates_targeted_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a student management system")
 
-    result = request("POST", "/api/tasks/run", {"prompt": "build a student management system", "preview": False})
-
-    assert result["ok"] is True
-    assert result["mode"] == "management-system-generator"
-    assert result["created_files"] == ["student_management_system.html"]
-    content = target.read_text(encoding="utf-8")
+    assert plan.mode == "management-system-generator"
+    assert created == ["student_management_system.html"]
+    content = (tmp_path / "student_management_system.html").read_text(encoding="utf-8")
     assert "Student Management System" in content
     assert "Program" in content
     assert "Active" in content
     assert "deleteRecord" in content
 
-def test_website_prompt_creates_previewable_site(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "bakery_website" / "index.html"
-    if target.exists():
-        target.unlink()
 
-    result = request("POST", "/api/tasks/run", {"prompt": "create a bakery website", "preview": False})
+def test_website_prompt_creates_previewable_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "create a bakery website")
 
-    assert result["ok"] is True
-    assert result["mode"] == "website-generator"
-    assert result["created_files"] == ["bakery_website/index.html", "bakery_website/styles.css", "bakery_website/app.js", "bakery_website/WORKFLOW.md"]
-    assert result["workflow_summary"].startswith("prompt -> requirement analysis")
-    assert "CSS" in result["stack"]
-    assert "bakery_website/WORKFLOW.md" in result["file_plan"]
-    content = target.read_text(encoding="utf-8")
+    assert plan.mode == "website-generator"
+    assert created == ["bakery_website/index.html", "bakery_website/styles.css", "bakery_website/app.js", "bakery_website/WORKFLOW.md"]
+    assert plan.workflow_summary.startswith("prompt -> requirement analysis")
+    assert "CSS" in plan.stack
+    assert "bakery_website/WORKFLOW.md" in plan.file_plan
+    content = (tmp_path / "bakery_website" / "index.html").read_text(encoding="utf-8")
     assert "Bakery Website" in content
     assert "app.js" in content
-    workflow = (workspace / "bakery_website" / "WORKFLOW.md").read_text(encoding="utf-8")
+    workflow = (tmp_path / "bakery_website" / "WORKFLOW.md").read_text(encoding="utf-8")
     assert "Requirement Analysis" in workflow
-    assert any(step["name"] == "verify" and step["status"] == "ok" for step in result["steps"])
 
 
-def test_general_system_prompt_creates_dashboard_prototype(backend_server: None, test_env: dict[str, str]) -> None:
-    workspace = Path(test_env["AGENT_WORKDIR"])
-    target = workspace / "clinic_system" / "index.html"
-    if target.exists():
-        target.unlink()
+def test_general_system_prompt_creates_dashboard_prototype(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a clinic system")
 
-    result = request("POST", "/api/tasks/run", {"prompt": "make a clinic system", "preview": False})
-
-    assert result["ok"] is True
-    assert result["mode"] == "system-prototype-generator"
-    assert result["created_files"] == ["clinic_system/index.html", "clinic_system/styles.css", "clinic_system/app.js", "clinic_system/WORKFLOW.md"]
-    assert "localStorage" in result["stack"]
-    assert result["clarification_questions"]
-    content = target.read_text(encoding="utf-8")
+    assert plan.mode == "system-prototype-generator"
+    assert created == ["clinic_system/index.html", "clinic_system/styles.css", "clinic_system/app.js", "clinic_system/WORKFLOW.md"]
+    assert "localStorage" in plan.stack
+    assert plan.clarification_questions
+    content = (tmp_path / "clinic_system" / "index.html").read_text(encoding="utf-8")
     assert "Clinic System" in content
-    app_js = (workspace / "clinic_system" / "app.js").read_text(encoding="utf-8")
+    app_js = (tmp_path / "clinic_system" / "app.js").read_text(encoding="utf-8")
     assert "addRecord" in app_js
     assert "toggleRecord" in app_js
     assert "localStorage" in app_js
@@ -701,6 +708,9 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
+
+
 
 
 

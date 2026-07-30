@@ -1,11 +1,12 @@
 ﻿import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..agent.loop import AgentSession
 from ..agent.session_manager import manager
+from .auth import optional_user
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -75,9 +76,9 @@ class ActivityHistory(BaseModel):
     errors: list[ActivityEntry]
 
 
-def _get_session(session_id: str) -> AgentSession:
+def _get_session(session_id: str, owner_id: str | None = None) -> AgentSession:
     session = manager.get(session_id)
-    if session is None:
+    if session is None or (owner_id is not None and session.owner_id != owner_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
@@ -92,29 +93,29 @@ async def _continue(session: AgentSession) -> AgentResponse:
 
 
 @router.get("", response_model=list[SessionInfo])
-async def list_sessions() -> list[SessionInfo]:
-    return [SessionInfo(**s.info()) for s in manager.list()]
+async def list_sessions(user: dict[str, Any] = Depends(optional_user)) -> list[SessionInfo]:
+    return [SessionInfo(**s.info()) for s in manager.list(user["id"])]
 
 
 @router.post("", response_model=SessionInfo)
-async def create_session(body: CreateSessionRequest = CreateSessionRequest()) -> SessionInfo:
-    session = await manager.create(title=(body.title or "").strip() or None)
+async def create_session(body: CreateSessionRequest = CreateSessionRequest(), user: dict[str, Any] = Depends(optional_user)) -> SessionInfo:
+    session = await manager.create(title=(body.title or "").strip() or None, owner_id=user["id"])
     return SessionInfo(**session.info())
 
 
 @router.patch("/{session_id}", response_model=SessionInfo)
-async def rename_session(session_id: str, body: RenameSessionRequest) -> SessionInfo:
+async def rename_session(session_id: str, body: RenameSessionRequest, user: dict[str, Any] = Depends(optional_user)) -> SessionInfo:
     title = body.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title must not be empty")
-    _get_session(session_id)
+    _get_session(session_id, user["id"])
     session = await manager.rename(session_id, title[:255])
     return SessionInfo(**session.info())
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str) -> dict[str, bool]:
-    _get_session(session_id)
+async def delete_session(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> dict[str, bool]:
+    _get_session(session_id, user["id"])
     try:
         await manager.delete(session_id)
     except RuntimeError as exc:
@@ -126,16 +127,16 @@ async def delete_session(session_id: str) -> dict[str, bool]:
 
 
 @router.get("/{session_id}/state", response_model=AgentResponse)
-async def get_state(session_id: str) -> AgentResponse:
+async def get_state(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
     """Full transcript â€” lets the UI rebuild after a reload or session switch."""
-    session = _get_session(session_id)
+    session = _get_session(session_id, user["id"])
     return AgentResponse(events=session.full_state(), busy=session.busy)
 
 
 @router.get("/{session_id}/activity", response_model=ActivityHistory)
-async def get_activity(session_id: str) -> ActivityHistory:
+async def get_activity(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> ActivityHistory:
     """Categorized activity history for audit/history views."""
-    session = _get_session(session_id)
+    session = _get_session(session_id, user["id"])
     prompts: list[ActivityEntry] = []
     tool_calls: list[ActivityEntry] = []
     approvals: list[ActivityEntry] = []
@@ -171,9 +172,9 @@ async def get_activity(session_id: str) -> ActivityHistory:
 
 
 @router.post("/{session_id}/cli-event", response_model=AgentResponse)
-async def record_cli_event(session_id: str, body: CliEventRequest) -> AgentResponse:
+async def record_cli_event(session_id: str, body: CliEventRequest, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
     """Record deterministic CLI actions so they are visible in the web history."""
-    session = _get_session(session_id)
+    session = _get_session(session_id, user["id"])
     if session.busy:
         raise HTTPException(status_code=409, detail="Session is busy")
 
@@ -205,14 +206,14 @@ async def record_cli_event(session_id: str, body: CliEventRequest) -> AgentRespo
     return AgentResponse(events=session.drain(), busy=False)
 
 @router.post("/{session_id}/continue", response_model=AgentResponse)
-async def continue_turn(session_id: str) -> AgentResponse:
+async def continue_turn(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
     """Long-poll for the next pause point (used after a reload mid-turn)."""
-    return await _continue(_get_session(session_id))
+    return await _continue(_get_session(session_id, user["id"]))
 
 
 @router.post("/{session_id}/chat", response_model=AgentResponse)
-async def chat(session_id: str, body: ChatRequest) -> AgentResponse:
-    session = _get_session(session_id)
+async def chat(session_id: str, body: ChatRequest, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
+    session = _get_session(session_id, user["id"])
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message must not be empty")
@@ -223,23 +224,23 @@ async def chat(session_id: str, body: ChatRequest) -> AgentResponse:
 
 
 @router.post("/{session_id}/approval", response_model=AgentResponse)
-async def approval(session_id: str, body: ApprovalRequest) -> AgentResponse:
-    session = _get_session(session_id)
+async def approval(session_id: str, body: ApprovalRequest, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
+    session = _get_session(session_id, user["id"])
     session.resolve_approval(body.id, body.approved)
     return await _continue(session)
 
 
 @router.post("/{session_id}/stop", response_model=AgentResponse)
-async def stop(session_id: str) -> AgentResponse:
-    session = _get_session(session_id)
+async def stop(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
+    session = _get_session(session_id, user["id"])
     session.request_stop()
     return await _continue(session)
 
 
 @router.post("/{session_id}/reset", response_model=AgentResponse)
-async def reset(session_id: str) -> AgentResponse:
+async def reset(session_id: str, user: dict[str, Any] = Depends(optional_user)) -> AgentResponse:
     """Clear this session's transcript (keeps the session itself)."""
-    session = _get_session(session_id)
+    session = _get_session(session_id, user["id"])
     try:
         session.reset()
     except RuntimeError as exc:
@@ -299,4 +300,6 @@ def _activity_entry(event: dict[str, Any]) -> Optional[ActivityEntry]:
             data={},
         )
     return None
+
+
 

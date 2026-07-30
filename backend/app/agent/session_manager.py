@@ -1,4 +1,4 @@
-"""Registry of chat sessions.
+﻿"""Registry of chat sessions.
 
 Holds every AgentSession in memory (fine for a single-user tool) and mirrors
 creations/deletions to MySQL. Stored sessions are hydrated once at startup;
@@ -24,17 +24,21 @@ class SessionManager:
                 updated_at=row["updated_at"],
                 conversation=row["conversation"],
                 events=row["events"],
+                owner_id=row.get("owner_id") or "local",
             )
             self._sessions[session.id] = session
 
-    def list(self) -> list[AgentSession]:
-        return sorted(self._sessions.values(), key=lambda s: s.updated_at, reverse=True)
+    def list(self, owner_id: str | None = None) -> list[AgentSession]:
+        sessions = self._sessions.values()
+        if owner_id is not None:
+            sessions = [session for session in sessions if session.owner_id == owner_id]
+        return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
     def get(self, session_id: str) -> Optional[AgentSession]:
         return self._sessions.get(session_id)
 
-    async def create(self, title: Optional[str] = None) -> AgentSession:
-        session = AgentSession(title=title or DEFAULT_TITLE)
+    async def create(self, title: Optional[str] = None, owner_id: str = "local") -> AgentSession:
+        session = AgentSession(title=title or DEFAULT_TITLE, owner_id=owner_id)
         self._sessions[session.id] = session
         await session.persist()
         return session
@@ -58,3 +62,4 @@ class SessionManager:
 
 
 manager = SessionManager()
+

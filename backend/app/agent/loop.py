@@ -130,10 +130,12 @@ class AgentSession:
         updated_at: Optional[datetime] = None,
         conversation: Optional[list[dict[str, Any]]] = None,
         events: Optional[list[dict[str, Any]]] = None,
+        owner_id: str = "local",
     ) -> None:
         now = _utcnow()
         self.id = session_id or uuid.uuid4().hex
         self.title = title
+        self.owner_id = owner_id or "local"
         self.created_at = created_at or now
         self.updated_at = updated_at or now
         self._client = ollama.AsyncClient(host=settings.ollama_host)
@@ -163,11 +165,18 @@ class AgentSession:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "busy": self.busy,
+            "owner_id": self.owner_id,
         }
 
     async def persist(self) -> None:
         await db.save_session(
-            self.id, self.title, self.conversation, self.events, self.created_at, self.updated_at
+            self.id,
+            self.title,
+            self.conversation,
+            self.events,
+            self.created_at,
+            self.updated_at,
+            self.owner_id,
         )
 
     # ------------------------------------------------------------ event log
@@ -659,6 +668,9 @@ def _wants_workspace_context(user_message: str) -> bool:
         "find in",
     }
     return any(keyword in text for keyword in workspace_keywords)
+
+
+
 
 
 
