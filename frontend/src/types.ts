@@ -155,4 +155,10 @@ export interface TaskRunResponse {
   preview_url: string | null;
   steps: TaskRunStep[];
   notes: string[];
+  requirements_analysis?: string[];
+  clarification_questions?: string[];
+  stack?: string[];
+  file_plan?: string[];
+  workflow_summary?: string;
 }
+

@@ -16,7 +16,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
+import type { AdminOverview, ChatItem, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -36,7 +36,8 @@ function App() {
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
   const [dashboardOpen, setDashboardOpen] = useState(false);
-  const [, setAutoBuildBusy] = useState(false);
+  const [autoBuildBusy, setAutoBuildBusy] = useState(false);
+  const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -156,6 +157,13 @@ function App() {
 
 
   const runAutoBuild = useCallback((prompt: string) => {
+    const id = `build-${Date.now()}`;
+    setAutoBuildItems((prev) => [
+      ...prev,
+      { kind: "user", id: `${id}-user`, content: prompt },
+      { kind: "assistant", id: `${id}-working`, content: "SHAMSU accepted this build request and is working on it..." },
+    ]);
+    setNotice("SHAMSU is working on your build request...");
     setAutoBuildBusy(true);
     runTaskBuild(prompt)
       .then((result) => {
@@ -165,10 +173,33 @@ function App() {
         if (result.preview_url) {
           window.open(result.preview_url, "_blank", "noopener,noreferrer");
         }
-        const fileText = result.created_files.length ? ` Created: ${result.created_files.join(", ")}.` : "";
-        setNotice(`${result.ok ? "Autonomous build completed." : "Autonomous build needs follow-up."}${fileText}`);
+        const fileText = result.created_files.length ? `Created files: ${result.created_files.join(", ")}.` : "No files were created.";
+        const section = (title: string, rows?: string[]) => rows?.length ? `\n\n${title}:\n${rows.map((row) => `- ${row}`).join("\n")}` : "";
+        const workflowText = result.workflow_summary ? `\n\nWorkflow:\n${result.workflow_summary}` : "";
+        const stepText = result.steps.length
+          ? `\n\nVerification steps:\n${result.steps.slice(0, 8).map((step) => `- ${step.name}: ${step.status} - ${step.detail}`).join("\n")}`
+          : "";
+        const noteText = result.notes.length ? `\n\nNotes:\n${result.notes.map((note) => `- ${note}`).join("\n")}` : "";
+        const summary = [
+          result.ok ? "Build completed." : "Build needs follow-up.",
+          `Mode: ${result.mode}.`,
+          fileText,
+          result.preview_url ? `Preview: ${result.preview_url}` : "Preview: not available until verification passes.",
+        ].join("\n")
+          + section("Requirement analysis", result.requirements_analysis)
+          + section("Clarification questions", result.clarification_questions)
+          + section("Chosen stack", result.stack)
+          + section("File plan", result.file_plan)
+          + workflowText
+          + stepText
+          + noteText;
+        setAutoBuildItems((prev) => prev.map((item) => item.id === `${id}-working` ? { ...item, content: summary } : item));
+        setNotice(`${result.ok ? "Autonomous build completed." : "Autonomous build needs follow-up."} ${fileText}`);
       })
-      .catch((err: Error) => setNotice(err.message))
+      .catch((err: Error) => {
+        setAutoBuildItems((prev) => prev.map((item) => item.id === `${id}-working` ? { ...item, content: `Build failed: ${err.message}` } : item));
+        setNotice(err.message);
+      })
       .finally(() => setAutoBuildBusy(false));
   }, [refreshDashboard, refreshFileTree, reloadCleanTabs]);
 
@@ -179,7 +210,7 @@ function App() {
   );
   const sendOrBuild = useCallback((text: string, contextFiles: string[]) => {
     const lower = text.toLowerCase();
-    const shouldAutoBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|os|operating system)\b/.test(lower);
+    const shouldAutoBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower);
     if (shouldAutoBuild) {
       runAutoBuild(text);
       return;
@@ -352,8 +383,8 @@ function App() {
             <button className="app__new-chat app__session-delete" onClick={removeSession} disabled={busy || !activeSessionId} title="Delete this session">Delete</button>
           </div>
           <ChatPanel
-            items={items}
-            busy={busy}
+            items={[...items, ...autoBuildItems]}
+            busy={busy || autoBuildBusy}
             connected={connected}
             files={workspaceFiles}
             activePath={activePath}
@@ -408,6 +439,13 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
 
 
 

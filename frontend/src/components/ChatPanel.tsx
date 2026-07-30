@@ -194,23 +194,45 @@ export function ChatPanel({
           <button
             type="button"
             className="chat-panel__plus"
-            title="Attach a workspace file as context"
-            disabled={!connected || busy || files.length === 0}
+            title="Add files or context"
+            disabled={!connected || busy}
             onClick={() => setPickerOpen((o) => !o)}
+            aria-expanded={pickerOpen}
           >
             +
           </button>
           {pickerOpen && (
-            <div className="file-picker">
+            <div className="file-picker file-picker--menu">
+              <div className="file-picker__section">
+                <button
+                  type="button"
+                  className="file-picker__action"
+                  disabled={uploading}
+                  onClick={() => uploadRef.current?.click()}
+                >
+                  <strong>Upload from laptop</strong>
+                  <span>Attach a PDF, text, code, or data file.</span>
+                </button>
+                <button
+                  type="button"
+                  className="file-picker__action"
+                  disabled={!activePath || attached.includes(activePath)}
+                  onClick={() => activePath && attach(activePath)}
+                >
+                  <strong>Attach open workspace file</strong>
+                  <span>{activePath ?? "Open a workspace file first."}</span>
+                </button>
+              </div>
+              <div className="file-picker__divider" />
               <input
                 autoFocus
                 className="file-picker__filter"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter files..."
+                placeholder="Search workspace files..."
               />
               <div className="file-picker__list">
-                {ordered.length === 0 && <div className="file-picker__empty">No files.</div>}
+                {ordered.length === 0 && <div className="file-picker__empty">No workspace files available.</div>}
                 {ordered.map((path) => (
                   <button
                     key={path}
@@ -234,16 +256,6 @@ export function ChatPanel({
           accept=".pdf,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.yaml,.yml,.log"
           onChange={(e) => void handleUpload(e.target.files?.[0])}
         />
-        <button
-          type="button"
-          className="btn"
-          disabled={!connected || busy || uploading}
-          onClick={() => uploadRef.current?.click()}
-          title="Upload a PDF or text file as context"
-          aria-busy={uploading}
-        >
-          {uploading ? "Processing" : "Upload"}
-        </button>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -263,6 +275,8 @@ export function ChatPanel({
     </div>
   );
 }
+
+
 
 
 
