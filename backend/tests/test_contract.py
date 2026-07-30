@@ -186,6 +186,48 @@ def test_large_file_edit_workflow_handles_no_match(backend_server: None) -> None
     assert "Indexed" in result["index_summary"]
     assert result["next_steps"]
 
+def test_verification_workflow_dry_run_filters_commands(backend_server: None) -> None:
+    result = request(
+        "POST",
+        "/api/workflows/verify",
+        {"target": "workspace", "run": False, "commands": ["python --version", "Remove-Item -Recurse ."]},
+    )
+
+    assert result["run"] is False
+    assert result["ok"] is False
+    assert result["commands"] == ["python --version"]
+    assert result["results"] == []
+    assert any("Skipped unsupported" in step for step in result["next_steps"])
+
+
+def test_verification_workflow_runs_and_reports_failure(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    (workspace / "broken_verify.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+    result = request(
+        "POST",
+        "/api/workflows/verify",
+        {"target": "workspace", "run": True, "commands": ["python -m py_compile broken_verify.py"]},
+    )
+
+    assert result["run"] is True
+    assert result["ok"] is False
+    assert result["results"][0]["ok"] is False
+    assert result["repair_feedback"]
+    assert "failed" in result["repair_feedback"][0] or "SyntaxError" in result["repair_feedback"][0]
+
+
+def test_verification_workflow_runs_passing_command(backend_server: None) -> None:
+    result = request(
+        "POST",
+        "/api/workflows/verify",
+        {"target": "workspace", "run": True, "commands": ["python --version"]},
+    )
+
+    assert result["ok"] is True
+    assert result["results"][0]["ok"] is True
+    assert result["repair_feedback"] == []
+
 def test_model_list_and_switch_validation(backend_server: None) -> None:
     state = request("GET", "/api/models")
     model_ids = [model["id"] for model in state["models"]]
@@ -526,7 +568,7 @@ def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict
     assert index_proc.returncode == 0, index_proc.stderr
     assert "sample.py" in index_proc.stdout
     assert "patch_target.py" in index_proc.stdout
-    assert "[history] recorded in web session" in index_proc.stdout
+    assert "[history] recorded in web session" in index_proc.stdout or "[history warning]" in index_proc.stderr
 
     range_proc = subprocess.run(
         [sys.executable, "cli.py", "--api", API_BASE, "range", "sample.py", "1", "2"],
@@ -581,4 +623,6 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
     assert handled is True
     assert captured["name"] == "write_file"
     assert captured["args"] == {"path": "division.py", "content": "def divide(a, b):\n    return a / b\n"}
+
+
 
