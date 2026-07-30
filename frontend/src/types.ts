@@ -1,4 +1,14 @@
-﻿export interface FileNode {
+﻿export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+export interface FileNode {
   name: string;
   path: string;
   type: "file" | "dir";
@@ -161,4 +171,5 @@ export interface TaskRunResponse {
   file_plan?: string[];
   workflow_summary?: string;
 }
+
 

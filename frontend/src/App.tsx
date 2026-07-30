@@ -1,7 +1,9 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import "./App.css";
 import {
   createSession,
+  getCurrentUser,
   deleteSession,
   getAdminOverview,
   getContextDashboard,
@@ -9,14 +11,18 @@ import {
   getFileTree,
   getModels,
   listSessions,
+  login,
+  logout,
+  register,
   runTaskBuild,
   saveFileContent,
+  setAuthToken,
   setCurrentModel,
 } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, ChatItem, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -38,6 +44,12 @@ function App() {
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -79,6 +91,13 @@ function App() {
 
 
   useEffect(() => {
+    getCurrentUser()
+      .then(setAuthUser)
+      .catch(() => setAuthUser(null));
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
     listSessions()
       .then(async (list) => {
         if (list.length === 0) {
@@ -89,7 +108,7 @@ function App() {
         setActiveSessionId(list[0].id);
       })
       .catch((err: Error) => setNotice(`Could not load sessions: ${err.message}`));
-  }, []);
+  }, [authUser]);
 
   const newSession = useCallback(() => {
     createSession()
@@ -230,6 +249,7 @@ function App() {
   
   // CLI-created sessions are recorded by the backend; poll so the browser catches them.
   useEffect(() => {
+    if (!authUser) return;
     const timer = window.setInterval(() => {
       refreshSessions(true);
       void refreshFileTree();
@@ -282,7 +302,64 @@ function App() {
     [refreshFileTree],
   );
 
+
+  const submitAuth = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthBusy(true);
+    const action = authMode === "register" ? register(authEmail, authPassword, authName) : login(authEmail, authPassword);
+    action
+      .then((response) => {
+        setAuthToken(response.token);
+        setAuthUser(response.user);
+        setAuthPassword("");
+        setNotice(`Signed in as ${response.user.email}.`);
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setAuthBusy(false));
+  }, [authEmail, authMode, authName, authPassword]);
+
+  const signOut = useCallback(() => {
+    logout().finally(() => {
+      setAuthUser(null);
+      setSessions([]);
+      setActiveSessionId(null);
+      setAutoBuildItems([]);
+      setTabs([]);
+      setActivePath(null);
+      setNotice("Signed out.");
+    });
+  }, []);
   const workspaceFiles = flattenFiles(fileTree);
+
+  if (!authUser) {
+    return (
+      <div className="auth-page">
+        <form className="auth-card" onSubmit={submitAuth}>
+          <h1>SHAMSU</h1>
+          <p>Sign in with your email to open your own chats, history, uploads, and workspace sessions.</p>
+          {authMode === "register" && (
+            <label>
+              Name
+              <input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="Your name" />
+            </label>
+          )}
+          <label>
+            Email
+            <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com" required />
+          </label>
+          <label>
+            Password
+            <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="At least 6 characters" required />
+          </label>
+          <button className="auth-card__submit" type="submit" disabled={authBusy}>{authBusy ? "Please wait" : authMode === "register" ? "Create account" : "Sign in"}</button>
+          <button className="auth-card__switch" type="button" onClick={() => setAuthMode(authMode === "register" ? "login" : "register")}>
+            {authMode === "register" ? "Already have an account? Sign in" : "New to SHAMSU? Create account"}
+          </button>
+          {notice && <div className="auth-card__notice">{notice}</div>}
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -305,6 +382,8 @@ function App() {
             ))}
           </select>
         </div>
+        <div className="app__user-pill" title={authUser.email}>{authUser.email}</div>
+        <button className="app__logout" onClick={signOut}>Logout</button>
         <button
           className="app__dashboard-toggle"
           onClick={() => {
@@ -439,6 +518,9 @@ function App() {
 }
 
 export default App;
+
+
+
 
 
 
