@@ -171,7 +171,13 @@ def test_session_create_state_activity_and_delete(backend_server: None) -> None:
     assert deleted == {"ok": True}
 
 
-def test_context_summary_dashboard_and_search(backend_server: None) -> None:
+def test_context_summary_dashboard_search_and_project_map(backend_server: None, test_env: dict[str, str]) -> None:
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    (workspace / "package.json").write_text('{"dependencies":{"react":"latest","vite":"latest"}}', encoding="utf-8")
+    src = workspace / "src"
+    src.mkdir(exist_ok=True)
+    (src / "main.tsx").write_text('import React from "react";\nimport { App } from "./App";\nexport function boot(){ return App(); }\n', encoding="utf-8")
+    (src / "App.tsx").write_text('export function App(){ return <main>hello</main>; }\n', encoding="utf-8")
     summary = request("GET", "/api/context/summary")
     assert "chunk_count" in summary
     assert summary["chunk_count"] >= 1
@@ -296,7 +302,7 @@ def test_mcp_tools_list(test_env: dict[str, str]) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     tool_names = {tool["name"] for tool in payload["result"]["tools"]}
-    assert {"list_directory", "read_file", "search_files", "search_context", "context_summary", "context_overview"}.issubset(tool_names)
+    assert {"list_directory", "read_file", "search_files", "search_context", "context_summary", "context_overview", "project_map"}.issubset(tool_names)
 
 
 def test_cli_sessions_command(backend_server: None, test_env: dict[str, str]) -> None:

@@ -1,4 +1,4 @@
-﻿"""Stdio MCP server for the SHAMSU tools.
+"""Stdio MCP server for the SHAMSU tools.
 
 The server exposes sandboxed workspace tools and read-only resources over a
 JSON-RPC/MCP-compatible stdio transport. It supports initialize, ping,
@@ -59,6 +59,14 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "project_map",
+        "description": "Build a compact architecture map with languages, framework hints, entry points, important files, large files, and local dependency edges.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 80}},
+        },
+    },
+    {
         "name": "context_summary",
         "description": "Summarize indexed workspace and uploaded context files.",
         "inputSchema": {
@@ -100,6 +108,11 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         "search_files": lambda args: tools.search_files(_required(args, "query"), str(args.get("path") or ".")),
         "search_context": lambda args: context_index.format_context_results(
             _required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 20)
+        ),
+        "project_map": lambda args: json.dumps(
+            context_index.project_map(limit=_int_arg(args, "limit", 80, 1, 200)),
+            ensure_ascii=False,
+            indent=2,
         ),
         "context_summary": lambda args: json.dumps(
             context_index.summarize_workspace(limit=_int_arg(args, "limit", 30, 1, 100)),

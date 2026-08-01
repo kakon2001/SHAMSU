@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query
 
 from .. import context_index
 
@@ -47,3 +47,8 @@ async def context_overview(query: str = Query("")) -> dict[str, object]:
         "query": query,
         "overview": context_index.automatic_summary_context(query),
     }
+
+
+@router.get("/project-map")
+async def context_project_map(limit: int = Query(80, ge=1, le=200)) -> dict[str, object]:
+    return context_index.project_map(limit=limit)

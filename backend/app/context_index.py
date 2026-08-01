@@ -1,4 +1,4 @@
-﻿"""Lightweight workspace context index.
+"""Lightweight workspace context index.
 
 Text files in the workspace are split into chunks and searched with keyword
 overlap. This module also builds compact file, upload, and conversation
@@ -341,6 +341,191 @@ def _chunk_text(path: str, text: str) -> list[ContextChunk]:
     return chunks
 
 
+
+def project_map(limit: int = 80) -> dict[str, object]:
+    """Build a compact architectural map for large-project understanding."""
+    files = _project_file_records(limit=max(limit, 1))
+    languages = Counter(str(item["language"]) for item in files if item.get("language") != "other")
+    frameworks = _detect_frameworks(files)
+    edges = _dependency_edges(files)
+    entry_points = [item for item in files if item.get("role") == "entrypoint"][:12]
+    large_files = [item for item in files if item.get("large")][:12]
+    important = sorted(files, key=_importance_score, reverse=True)[: min(limit, 20)]
+    return {
+        "root": str(settings.workdir_path),
+        "file_count": len(files),
+        "languages": dict(languages.most_common()),
+        "frameworks": frameworks,
+        "entry_points": _public_file_records(entry_points),
+        "important_files": _public_file_records(important),
+        "large_files": _public_file_records(large_files),
+        "dependency_edges": edges[:80],
+        "notes": [
+            "Use this project map before broad edits to understand likely entry points and related files.",
+            "Use read_file_range for large files instead of loading the whole file.",
+            "Dependency edges are best-effort local import/link guesses, not a full compiler graph.",
+        ],
+    }
+
+
+def project_map_context(query: str = "", budget: int = 2600) -> str:
+    """Format project_map as a compact context block for the model."""
+    mapping = project_map(limit=80)
+    lines: list[str] = []
+    if mapping.get("languages"):
+        lines.append("Languages: " + ", ".join(f"{name}={count}" for name, count in dict(mapping["languages"]).items()))
+    if mapping.get("frameworks"):
+        lines.append("Framework hints: " + ", ".join(str(item) for item in mapping["frameworks"]))
+    entries = mapping.get("entry_points") or []
+    if entries:
+        lines.append("Entry points: " + ", ".join(str(item.get("path")) for item in entries[:8]))
+    important = mapping.get("important_files") or []
+    if important:
+        lines.append("Important files:")
+        for item in important[:10]:
+            symbols = ", ".join(str(value) for value in item.get("symbols", [])[:5])
+            imports = ", ".join(str(value) for value in item.get("imports", [])[:5])
+            detail = f"- {item.get('path')} [{item.get('language')}, {item.get('role')}, {item.get('lines')} lines]"
+            if symbols:
+                detail += f" symbols: {symbols}"
+            if imports:
+                detail += f" imports: {imports}"
+            lines.append(detail)
+    edges = mapping.get("dependency_edges") or []
+    if edges:
+        lines.append("Local dependency edges: " + "; ".join(f"{edge.get('from')} -> {edge.get('to')}" for edge in edges[:12]))
+    result = "\n".join(lines)
+    if len(result) > budget:
+        result = result[:budget].rstrip() + "\n... [project map truncated]"
+    return result
+
+
+def _project_file_records(limit: int = 80) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for file in sorted(settings.workdir_path.rglob("*")):
+        if not file.is_file() or any(part in IGNORED_DIRS for part in file.parts):
+            continue
+        rel = file.relative_to(settings.workdir_path).as_posix()
+        suffix = file.suffix.lower()
+        try:
+            size = file.stat().st_size
+        except OSError:
+            continue
+        text = ""
+        indexed = suffix in TEXT_EXTENSIONS and size <= 1024 * 1024
+        if indexed:
+            try:
+                text = file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+        lines = text.count("\n") + (1 if text else 0)
+        records.append({
+            "path": rel,
+            "bytes": size,
+            "lines": lines,
+            "language": _language_for_path(file),
+            "role": _role_for_path(rel),
+            "indexed": indexed,
+            "large": size > 300_000 or lines > 1000,
+            "symbols": _code_symbols(text)[:12] if text else [],
+            "imports": _import_names(text)[:12] if text else [],
+            "summary": detailed_file_summary(rel, text, max_chars=220) if text else "Large or non-text file; use range reads or file-specific tools.",
+        })
+    return sorted(records, key=_importance_score, reverse=True)[:limit]
+
+
+def _public_file_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    keys = ["path", "language", "role", "bytes", "lines", "large", "symbols", "imports", "summary"]
+    return [{key: item.get(key) for key in keys} for item in records]
+
+
+def _importance_score(item: dict[str, object]) -> int:
+    path = str(item.get("path") or "").lower()
+    score = 0
+    if item.get("role") == "entrypoint":
+        score += 30
+    if item.get("role") in {"config", "manifest"}:
+        score += 18
+    if item.get("role") == "test":
+        score += 8
+    score += min(len(item.get("symbols") or []), 10) * 2
+    score += min(len(item.get("imports") or []), 10)
+    if any(name in path for name in ["main", "app", "index", "package.json", "requirements.txt", "vite.config", "readme"]):
+        score += 10
+    if item.get("large"):
+        score -= 4
+    return score
+
+
+def _language_for_path(path: Path) -> str:
+    return {
+        ".py": "python", ".js": "javascript", ".jsx": "react", ".ts": "typescript", ".tsx": "react-typescript",
+        ".html": "html", ".css": "css", ".json": "json", ".md": "markdown", ".txt": "text",
+        ".c": "c", ".h": "c-header", ".yaml": "yaml", ".yml": "yaml",
+    }.get(path.suffix.lower(), "other")
+
+
+def _role_for_path(path: str) -> str:
+    lower = path.lower()
+    name = lower.rsplit("/", 1)[-1]
+    if name in {"main.py", "app.py", "index.html", "main.tsx", "main.jsx", "index.tsx", "index.jsx"}:
+        return "entrypoint"
+    if name in {"package.json", "requirements.txt"}:
+        return "manifest"
+    if name in {"vite.config.ts", "vite.config.js", "tsconfig.json", ".env.example"}:
+        return "config"
+    if "test" in name or lower.startswith("tests/"):
+        return "test"
+    if lower.endswith(".css"):
+        return "style"
+    if lower.endswith(".md"):
+        return "docs"
+    if "/routes/" in lower or name.endswith("routes.py"):
+        return "api-route"
+    if lower.endswith(".html"):
+        return "page"
+    return "source"
+
+
+def _detect_frameworks(files: list[dict[str, object]]) -> list[str]:
+    hints: set[str] = set()
+    paths = {str(item.get("path") or "").lower() for item in files}
+    imports = " ".join(" ".join(str(value) for value in item.get("imports") or []) for item in files).lower()
+    if any(path.endswith("package.json") for path in paths):
+        hints.add("node/npm")
+    if "react" in imports or any(path.endswith(".tsx") or path.endswith(".jsx") for path in paths):
+        hints.add("react")
+    if any("vite.config" in path for path in paths):
+        hints.add("vite")
+    if "fastapi" in imports:
+        hints.add("fastapi")
+    if "pydantic" in imports:
+        hints.add("pydantic")
+    if any(path.endswith("requirements.txt") for path in paths):
+        hints.add("python requirements")
+    if any(path.startswith("tests/") or "test" in path for path in paths):
+        hints.add("automated tests")
+    return sorted(hints)
+
+
+def _dependency_edges(files: list[dict[str, object]]) -> list[dict[str, str]]:
+    by_stem: dict[str, str] = {}
+    for item in files:
+        path = str(item.get("path") or "")
+        stem = Path(path).with_suffix("").as_posix().lower()
+        by_stem[stem] = path
+        by_stem[Path(path).stem.lower()] = path
+    edges: list[dict[str, str]] = []
+    for item in files:
+        source = str(item.get("path") or "")
+        for raw_import in item.get("imports") or []:
+            candidate = str(raw_import).replace(".", "/").replace("./", "").replace("../", "").lower().strip("/")
+            target = by_stem.get(candidate) or by_stem.get(candidate.rsplit("/", 1)[-1])
+            if target and target != source:
+                edge = {"from": source, "to": target, "import": str(raw_import)}
+                if edge not in edges:
+                    edges.append(edge)
+    return edges
 def _event_summary(event: dict[str, Any]) -> str:
     kind = event.get("type")
     if kind == "user_message":
@@ -372,7 +557,12 @@ def _code_symbols(text: str) -> list[str]:
 
 def _import_names(text: str) -> list[str]:
     imports: list[str] = []
-    patterns = [r"^\s*import\s+([A-Za-z0-9_./@-]+)", r"^\s*from\s+([A-Za-z0-9_./@-]+)\s+import"]
+    patterns = [
+        r"^\s*import\s+([A-Za-z0-9_./@-]+)",
+        r"^\s*from\s+([A-Za-z0-9_./@-]+)\s+import",
+        r"from\s+['\"]([^'\"]+)['\"]",
+        r"require\(['\"]([^'\"]+)['\"]\)",
+    ]
     for pattern in patterns:
         for match in re.finditer(pattern, text, re.MULTILINE):
             name = match.group(1)
