@@ -204,8 +204,10 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _calculator_app_plan(prompt)
     if "bouncing" in lower and "ball" in lower:
         return _bouncing_ball_plan(prompt)
-    if "crm" in lower or "management system" in lower or "management app" in lower:
+    if "single html" in lower and ("crm" in lower or "management system" in lower or "management app" in lower):
         return _management_system_plan(prompt)
+    if "crm" in lower or "management system" in lower or "management app" in lower:
+        return _multi_file_management_app_plan(prompt)
     if _looks_like_website_request(lower):
         return _website_prototype_plan(prompt)
     if _looks_like_system_request(lower):
@@ -738,6 +740,105 @@ renderRecords();
         workflow_summary="prompt -> requirement analysis -> clarification questions -> stack choice -> file plan -> multi-file creation -> verification -> preview -> explanation",
     )
 
+def _multi_file_management_app_plan(prompt: str) -> TaskPlanResponse:
+    lower = prompt.lower()
+    if "student" in lower:
+        title, entity, category, contact = "Student Management System", "Student", "Program", "Student ID"
+        seeds = [
+            {"name": "Ayesha Rahman", "category": "CSE", "contact": "2026-001", "status": "Active", "notes": "Registered for summer semester."},
+            {"name": "Tanvir Islam", "category": "EEE", "contact": "2026-014", "status": "Probation", "notes": "Advisor meeting needed."},
+        ]
+    elif "inventory" in lower:
+        title, entity, category, contact = "Inventory Management System", "Item", "Category", "SKU"
+        seeds = [
+            {"name": "Wireless Mouse", "category": "Accessories", "contact": "SKU-1001", "status": "In Stock", "notes": "45 units available."},
+            {"name": "Laptop Charger", "category": "Hardware", "contact": "SKU-1020", "status": "Low Stock", "notes": "Reorder before demo week."},
+        ]
+    elif "library" in lower:
+        title, entity, category, contact = "Library Management System", "Book", "Section", "ISBN"
+        seeds = [
+            {"name": "Clean Code", "category": "Programming", "contact": "9780132350884", "status": "Available", "notes": "Popular CSE reference."},
+            {"name": "Database Systems", "category": "Academic", "contact": "DB-204", "status": "Issued", "notes": "Due next week."},
+        ]
+    else:
+        title, entity, category, contact = "CRM System", "Customer", "Company", "Contact"
+        seeds = [
+            {"name": "Northwind Traders", "category": "Retail", "contact": "sales@northwind.test", "status": "Lead", "notes": "Needs follow-up this week."},
+            {"name": "BluePeak Software", "category": "SaaS", "contact": "hello@bluepeak.test", "status": "Proposal", "notes": "Interested in annual plan."},
+        ]
+    base = _slug_from_title(title)
+    package_json = json.dumps({"name": base, "version": "0.1.0", "private": True, "type": "module", "scripts": {"preview": "python -m http.server 9000", "smoke": "python tests/smoke_test.py"}}, indent=2)
+    html = f'''<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>{title}</title><link rel="stylesheet" href="src/styles.css" /></head>
+<body><div id="app"></div><script type="module" src="src/main.js"></script></body>
+</html>
+'''
+    data_js = f'''export const appConfig = {{ title: {json.dumps(title)}, entity: {json.dumps(entity)}, categoryLabel: {json.dumps(category)}, contactLabel: {json.dumps(contact)}, statuses: ["Lead", "Active", "Proposal", "Won", "Open", "Done", "Archived"] }};
+export const seedRecords = {json.dumps(seeds, indent=2)};
+'''
+    state_js = f'''import {{ seedRecords }} from './data.js';
+const storageKey = '{base}-records';
+export function loadRecords() {{ return JSON.parse(localStorage.getItem(storageKey) || 'null') || seedRecords; }}
+export function saveRecords(records) {{ localStorage.setItem(storageKey, JSON.stringify(records)); }}
+export function addRecord(records, record) {{ return [...records, {{ ...record, id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) }}]; }}
+export function updateRecord(records, index, record) {{ return records.map((item, currentIndex) => currentIndex === index ? {{ ...item, ...record }} : item); }}
+export function deleteRecord(records, index) {{ return records.filter((_, currentIndex) => currentIndex !== index); }}
+'''
+    views_js = '''import { appConfig } from './data.js';
+export function layout() { return `<aside class="sidebar"><h1>${appConfig.title}</h1><button data-view="dashboard">Dashboard</button><button data-view="records">Records</button><button data-view="workflow">Workflow</button></aside><main class="content"><section id="dashboardView"></section><section id="recordsView"></section><section id="workflowView" class="hidden"><h2>Workflow</h2><ol><li>Requirement analysis</li><li>Stack choice</li><li>Multi-file project scaffold</li><li>Smoke verification</li><li>Preview and iterate</li></ol></section></main>`; }
+export function dashboard(records) { const openCount = records.filter((record) => !['Done', 'Won', 'Archived'].includes(record.status)).length; return `<h2>Dashboard</h2><div class="metrics"><article><span>Total</span><strong>${records.length}</strong></article><article><span>Open</span><strong>${openCount}</strong></article><article><span>Completed</span><strong>${records.length - openCount}</strong></article></div>`; }
+export function recordsTable(records) { const rows = records.map((record, index) => `<tr><td>${record.name}</td><td>${record.category}</td><td>${record.contact}</td><td><span>${record.status}</span></td><td>${record.notes || ''}</td><td><button data-edit="${index}">Edit</button><button data-delete="${index}">Delete</button></td></tr>`).join(''); return `<h2>${appConfig.entity} Records</h2><form id="recordForm" class="record-form"><input id="name" placeholder="${appConfig.entity} name" required /><input id="category" placeholder="${appConfig.categoryLabel}" required /><input id="contact" placeholder="${appConfig.contactLabel}" required /><select id="status">${appConfig.statuses.map((status) => `<option>${status}</option>`).join('')}</select><input id="notes" placeholder="Notes" /><button type="submit">Save</button></form><table><thead><tr><th>Name</th><th>${appConfig.categoryLabel}</th><th>${appConfig.contactLabel}</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`; }
+'''
+    main_js = '''import { addRecord, deleteRecord, loadRecords, saveRecords, updateRecord } from './state.js';
+import { dashboard, layout, recordsTable } from './views.js';
+let records = loadRecords(); let editingIndex = null; const app = document.getElementById('app'); app.innerHTML = layout();
+function render() { document.getElementById('dashboardView').innerHTML = dashboard(records); document.getElementById('recordsView').innerHTML = recordsTable(records); bindRecordEvents(); }
+function showView(name) { document.getElementById('dashboardView').classList.toggle('hidden', name !== 'dashboard'); document.getElementById('recordsView').classList.toggle('hidden', name !== 'records'); document.getElementById('workflowView').classList.toggle('hidden', name !== 'workflow'); }
+function bindRecordEvents() { document.getElementById('recordForm').addEventListener('submit', (event) => { event.preventDefault(); const record = Object.fromEntries(['name', 'category', 'contact', 'status', 'notes'].map((id) => [id, document.getElementById(id).value.trim()])); records = editingIndex === null ? addRecord(records, record) : updateRecord(records, editingIndex, record); editingIndex = null; saveRecords(records); render(); }); document.querySelectorAll('[data-delete]').forEach((button) => button.addEventListener('click', () => { records = deleteRecord(records, Number(button.dataset.delete)); saveRecords(records); render(); })); document.querySelectorAll('[data-edit]').forEach((button) => button.addEventListener('click', () => { editingIndex = Number(button.dataset.edit); const record = records[editingIndex]; ['name', 'category', 'contact', 'status', 'notes'].forEach((id) => { document.getElementById(id).value = record[id] || ''; }); })); }
+document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view))); render(); showView('dashboard');
+'''
+    css = '''body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#172033}.sidebar{position:fixed;inset:0 auto 0 0;width:240px;background:#102a43;color:white;padding:24px;box-sizing:border-box}.sidebar h1{font-size:24px;line-height:1.2}.sidebar button{display:block;width:100%;margin:8px 0;padding:11px;border:0;border-radius:6px;background:#2563eb;color:white;text-align:left;font-weight:800;cursor:pointer}.content{margin-left:240px;padding:26px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metrics article,section{background:white;border:1px solid #d8e1ec;border-radius:8px;padding:18px;margin-bottom:18px}.metrics strong{display:block;font-size:32px;color:#0f766e}.record-form{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}input,select{border:1px solid #cbd5e1;border-radius:6px;padding:10px;font:inherit}button{border:0;border-radius:6px;background:#7c3aed;color:white;padding:10px 12px;font-weight:800;cursor:pointer}table{width:100%;border-collapse:collapse;background:white}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:10px}.hidden{display:none}@media(max-width:840px){.sidebar{position:static;width:auto}.content{margin-left:0}.record-form,.metrics{grid-template-columns:1fr}table{font-size:14px}}'''
+    readme = f"""# {title}\n\nGenerated by SHAMSU as a multi-file project scaffold.\n\n## Run\n```powershell\ncd C:\\Users\\HP\\Desktop\\CSE327\\workspace\\{base}\npython -m http.server 9000\n```\n\nOpen `http://127.0.0.1:9000/index.html`.\n\n## Verify\n```powershell\npython tests/smoke_test.py\n```\n"""
+    workflow = f"""# Workflow\n\nPrompt: {prompt}\n\n1. Requirement analysis: build a usable {title} prototype.\n2. Stack choice: static modular JS first, upgradeable to React/FastAPI/MySQL.\n3. File plan: separate data, state, views, styles, docs, smoke test.\n4. Verification: generated files are readable and smoke test checks required files.\n5. Preview: browser preview opens `index.html`.\n"""
+    smoke = f'''from pathlib import Path
+root = Path(__file__).resolve().parents[1]
+required = ["index.html", "src/main.js", "src/views.js", "src/state.js", "src/data.js", "src/styles.css", "README.md", "WORKFLOW.md"]
+missing = [path for path in required if not (root / path).exists()]
+assert not missing, f"Missing files: {{missing}}"
+assert "{title}" in (root / "index.html").read_text(encoding="utf-8")
+assert "localStorage" in (root / "src/state.js").read_text(encoding="utf-8")
+print("smoke passed")
+'''
+    files = [
+        {"path": f"{base}/package.json", "content": package_json + "\n"},
+        {"path": f"{base}/README.md", "content": readme},
+        {"path": f"{base}/WORKFLOW.md", "content": workflow},
+        {"path": f"{base}/index.html", "content": html},
+        {"path": f"{base}/src/main.js", "content": main_js},
+        {"path": f"{base}/src/views.js", "content": views_js},
+        {"path": f"{base}/src/state.js", "content": state_js},
+        {"path": f"{base}/src/data.js", "content": data_js},
+        {"path": f"{base}/src/styles.css", "content": css},
+        {"path": f"{base}/tests/smoke_test.py", "content": smoke},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="multi-file-project-generator",
+        steps=["Analyze requirements.", "Choose modular browser app stack.", "Create folder scaffold with data/state/views/styles/tests/docs.", "Run lightweight file verification.", "Start preview server."],
+        suggested_files=files,
+        verify_commands=[f"python {base}/tests/smoke_test.py", f"Open http://127.0.0.1:9000/{base}/index.html"],
+        notes=["SHAMSU generated a multi-file project instead of a single HTML file so the app can be extended like a Claude-created project."],
+        requirements_analysis=[f"The prompt asks for a {title}-style system with multiple responsibilities.", "A modular file structure makes future edits safer and easier to explain."],
+        clarification_questions=["Which roles, reports, and database fields should the production version include?", "Should SHAMSU upgrade this scaffold to React/FastAPI/MySQL next?"],
+        stack=["HTML", "CSS", "JavaScript modules", "localStorage", "Python smoke test", "Local preview server"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="prompt -> requirement analysis -> stack choice -> multi-file file plan -> scaffold -> smoke verification -> preview -> next iteration",
+    )
+
+
+def _slug_from_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "shamsu_project"
 def _management_system_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     presets = {
