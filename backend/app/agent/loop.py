@@ -1,4 +1,4 @@
-﻿"""HTTP-driven agent sessions.
+"""HTTP-driven agent sessions.
 
 Each AgentSession (one per chat session, managed by session_manager) runs
 turns as background asyncio tasks and records everything that happens as an
@@ -7,7 +7,7 @@ until the agent either finishes or pauses on a mutating tool (write_file /
 run_shell) that needs user approval; the response carries all events produced
 since the last request. Approving or rejecting resumes the loop with the real
 result (or the rejection), so the agent can edit a file, run the tests, and
-react to failures within a single turn â€” no WebSocket required.
+react to failures within a single turn — no WebSocket required.
 
 Sessions are persisted to MySQL (see app.db) at every turn end, so the full
 transcript and conversation survive a backend restart.
@@ -34,7 +34,7 @@ activity_log = logging.getLogger("agent.activity")
 
 
 def _utcnow() -> datetime:
-    # Naive UTC â€” MySQL DATETIME has no timezone.
+    # Naive UTC — MySQL DATETIME has no timezone.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -158,7 +158,7 @@ class AgentSession:
         self.busy = False
 
     def info(self) -> dict[str, Any]:
-        """Metadata for session lists â€” no transcript payload."""
+        """Metadata for session lists — no transcript payload."""
         return {
             "id": self.id,
             "title": self.title,
@@ -221,7 +221,7 @@ class AgentSession:
         if self.title == DEFAULT_TITLE:
             # Name the session after its first request so the session list is readable.
             title = " ".join(user_message.split())
-            self.title = title[:57] + "â€¦" if len(title) > 58 else title or DEFAULT_TITLE
+            self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
         self._tools_enabled = _should_enable_tools(user_message, context_files or [])
@@ -288,6 +288,7 @@ class AgentSession:
             else ""
         )
         summary_context = context_index.automatic_summary_context(user_message)
+        project_map_context = context_index.project_map_context(user_message)
         conversation_memory = context_index.conversation_memory(self.events, user_message)
         blocks = []
         for path in context_files[:5]:
@@ -311,6 +312,9 @@ class AgentSession:
                 "attached file contents and do not substitute another workspace file:\n\n"
                 + "\n\n".join(blocks)
             )
+        if project_map_context:
+            parts.append("Compact project architecture map for large-project reasoning:\n\n" + project_map_context)
+
         if summary_context:
             parts.append(
                 "Compact project/upload summaries for broader context. These are summaries, "
@@ -367,7 +371,7 @@ class AgentSession:
         self._emit(
             {
                 "type": "assistant_message",
-                "content": "I hit the tool-call limit for this turn without finishing â€” "
+                "content": "I hit the tool-call limit for this turn without finishing — "
                 "ask again or break the request into smaller steps.",
             }
         )
@@ -465,6 +469,9 @@ class AgentSession:
             if not query:
                 return "Error: 'query' argument is required"
             return tools.search_context(query)
+        if name == "project_map":
+            return tools.project_map(args.get("path") or ".")
+
         if name == "project_index":
             return tools.project_index(args.get("path") or ".")
         return f"Error: unknown tool '{name}'"

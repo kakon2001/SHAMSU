@@ -1,4 +1,4 @@
-﻿"""Tool implementations for the agent.
+"""Tool implementations for the agent.
 
 Read-only tools (list_directory, read_file, search_files) execute immediately.
 Mutating tools (run_shell, write_file) are declared here but the agent loop
@@ -174,6 +174,13 @@ def read_file_range(path: str, start_line: int = 1, end_line: int = 200) -> str:
     return "\n".join(lines) if lines else f"No lines found in requested range {start_line}-{end_line}."
 
 
+def project_map(path: str = ".") -> str:
+    """Return a compact architectural project map for large-project reasoning."""
+    if path and path != ".":
+        resolve_in_workspace(path)
+    return json_dumps(context_index.project_map())
+
+
 def project_index(path: str = ".") -> str:
     """Return a compact local project index with files, sizes, symbols, and imports."""
     root = resolve_in_workspace(path)
@@ -343,7 +350,7 @@ def make_diff(path: str, new_content: str) -> tuple[str, bool]:
             tofile=f"b/{path}",
         )
     )
-    return diff or "(no changes â€” file content is identical)", is_new
+    return diff or "(no changes — file content is identical)", is_new
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +439,18 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "project_map",
+            "description": "Build a compact architecture map with languages, framework hints, entry points, important files, large files, and local dependency edges. Use before broad multi-file edits.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Relative directory, default root."}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "project_index",
             "description": "Build a compact index of project files, sizes, symbols, and imports for multi-file reasoning.",
             "parameters": {
@@ -440,7 +459,8 @@ TOOL_SCHEMAS = [
                 "required": [],
             },
         },
-    },    {
+    },
+    {
         "type": "function",
         "function": {
             "name": "write_file",
@@ -473,7 +493,8 @@ TOOL_SCHEMAS = [
                 "required": ["path", "old_text", "new_text"],
             },
         },
-    },    {
+    },
+    {
         "type": "function",
         "function": {
             "name": "run_shell",
@@ -493,7 +514,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "project_index"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "project_index", "project_map"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
 
