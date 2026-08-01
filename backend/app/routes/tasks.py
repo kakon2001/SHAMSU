@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -206,6 +206,8 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _bouncing_ball_plan(prompt)
     if "single html" in lower and ("crm" in lower or "management system" in lower or "management app" in lower):
         return _management_system_plan(prompt)
+    if ("crm" in lower or "management system" in lower or "management app" in lower) and _wants_database_backing(lower):
+        return _database_backed_management_app_plan(prompt)
     if "crm" in lower or "management system" in lower or "management app" in lower:
         return _multi_file_management_app_plan(prompt)
     if _looks_like_website_request(lower):
@@ -236,6 +238,10 @@ def _looks_like_system_request(text: str) -> bool:
     return bool(re.search(r"\b(system|dashboard|portal|application|app)\b", text)) and not any(
         word in text for word in ["game", "calculator", "todo", "quiz"]
     )
+
+
+def _wants_database_backing(text: str) -> bool:
+    return bool(re.search(r"\b(database|db|sqlite|backend|api|full[- ]?stack|persistent|server)\b", text))
 
 
 def _slug_from_prompt(prompt: str, fallback: str, suffix: str) -> str:
@@ -740,6 +746,361 @@ renderRecords();
         workflow_summary="prompt -> requirement analysis -> clarification questions -> stack choice -> file plan -> multi-file creation -> verification -> preview -> explanation",
     )
 
+
+def _database_backed_management_app_plan(prompt: str) -> TaskPlanResponse:
+    lower = prompt.lower()
+    if "student" in lower:
+        title, entity, category, contact = "Student Management System", "Student", "Program", "Student ID"
+        seeds = [
+            {"name": "Ayesha Rahman", "category": "CSE", "contact": "2026-001", "status": "Active", "notes": "Registered for summer semester."},
+            {"name": "Tanvir Islam", "category": "EEE", "contact": "2026-014", "status": "Probation", "notes": "Advisor meeting needed."},
+        ]
+    elif "inventory" in lower:
+        title, entity, category, contact = "Inventory Management System", "Item", "Category", "SKU"
+        seeds = [
+            {"name": "Wireless Mouse", "category": "Accessories", "contact": "SKU-1001", "status": "In Stock", "notes": "45 units available."},
+            {"name": "Laptop Charger", "category": "Hardware", "contact": "SKU-1020", "status": "Low Stock", "notes": "Reorder before demo week."},
+        ]
+    elif "library" in lower:
+        title, entity, category, contact = "Library Management System", "Book", "Section", "ISBN"
+        seeds = [
+            {"name": "Clean Code", "category": "Programming", "contact": "9780132350884", "status": "Available", "notes": "Popular CSE reference."},
+            {"name": "Database Systems", "category": "Academic", "contact": "DB-204", "status": "Issued", "notes": "Due next week."},
+        ]
+    else:
+        title, entity, category, contact = "CRM System", "Customer", "Company", "Contact"
+        seeds = [
+            {"name": "Northwind Traders", "category": "Retail", "contact": "sales@northwind.test", "status": "Lead", "notes": "Needs follow-up this week."},
+            {"name": "BluePeak Software", "category": "SaaS", "contact": "hello@bluepeak.test", "status": "Proposal", "notes": "Interested in annual plan."},
+        ]
+
+    base = f"{_slug_from_title(title)}_database"
+    seed_json = json.dumps(seeds, indent=4)
+    config_json = json.dumps({"title": title, "entity": entity, "categoryLabel": category, "contactLabel": contact}, indent=2)
+    requirements = "fastapi\nuvicorn[standard]\npydantic\n"
+    package_json = json.dumps(
+        {
+            "name": base,
+            "version": "0.1.0",
+            "private": True,
+            "scripts": {
+                "dev": "python -m uvicorn backend.main:app --reload --port 8090",
+                "smoke": "python tests/smoke_test.py",
+            },
+        },
+        indent=2,
+    )
+
+    database_py = '''from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+DB_PATH = Path(__file__).resolve().parents[1] / "app.db"
+SEED_RECORDS = __SEED_JSON__
+
+
+def connect() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db() -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                contact TEXT NOT NULL,
+                status TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        count = connection.execute("SELECT COUNT(*) AS total FROM records").fetchone()["total"]
+        if count == 0:
+            connection.executemany(
+                "INSERT INTO records (name, category, contact, status, notes) VALUES (:name, :category, :contact, :status, :notes)",
+                SEED_RECORDS,
+            )
+        connection.commit()
+
+
+def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def list_records() -> list[dict[str, Any]]:
+    with connect() as connection:
+        rows = connection.execute("SELECT * FROM records ORDER BY id DESC").fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def create_record(data: dict[str, str]) -> dict[str, Any]:
+    with connect() as connection:
+        cursor = connection.execute(
+            "INSERT INTO records (name, category, contact, status, notes) VALUES (?, ?, ?, ?, ?)",
+            (data["name"], data["category"], data["contact"], data["status"], data.get("notes", "")),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM records WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return row_to_dict(row)
+
+
+def update_record(record_id: int, data: dict[str, str]) -> dict[str, Any] | None:
+    with connect() as connection:
+        connection.execute(
+            "UPDATE records SET name = ?, category = ?, contact = ?, status = ?, notes = ? WHERE id = ?",
+            (data["name"], data["category"], data["contact"], data["status"], data.get("notes", ""), record_id),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
+    return row_to_dict(row) if row else None
+
+
+def delete_record(record_id: int) -> bool:
+    with connect() as connection:
+        cursor = connection.execute("DELETE FROM records WHERE id = ?", (record_id,))
+        connection.commit()
+    return cursor.rowcount > 0
+'''.replace("__SEED_JSON__", seed_json)
+
+    main_py = '''from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .database import create_record, delete_record, init_db, list_records, update_record
+
+APP_CONFIG = __CONFIG_JSON__
+
+
+class RecordIn(BaseModel):
+    name: str
+    category: str
+    contact: str
+    status: str = "Lead"
+    notes: str = ""
+
+
+app = FastAPI(title=APP_CONFIG["title"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
+
+
+@app.get("/api/config")
+def config() -> dict:
+    return APP_CONFIG
+
+
+@app.get("/api/records")
+def records() -> list[dict]:
+    return list_records()
+
+
+@app.post("/api/records", status_code=201)
+def create(data: RecordIn) -> dict:
+    return create_record(data.model_dump())
+
+
+@app.put("/api/records/{record_id}")
+def update(record_id: int, data: RecordIn) -> dict:
+    record = update_record(record_id, data.model_dump())
+    if record is None:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return record
+
+
+@app.delete("/api/records/{record_id}")
+def remove(record_id: int) -> dict[str, bool]:
+    if not delete_record(record_id):
+        raise HTTPException(status_code=404, detail="Record not found")
+    return {"ok": True}
+
+
+frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+'''.replace("__CONFIG_JSON__", config_json)
+
+    html = '''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__TITLE__</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar"><h1>__TITLE__</h1><button data-view="dashboard">Dashboard</button><button data-view="records">Records</button><button data-view="api">API</button></aside>
+  <main class="content"><section id="dashboard"></section><section id="records"></section><section id="api" class="hidden"><h2>API Workflow</h2><pre>GET /api/records\nPOST /api/records\nPUT /api/records/{id}\nDELETE /api/records/{id}</pre></section></main>
+  <script src="app.js"></script>
+</body>
+</html>
+'''.replace("__TITLE__", title)
+
+    app_js = '''let config = null;
+let records = [];
+let editingId = null;
+const views = ["dashboard", "records", "api"];
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+async function load() {
+  config = await api("/api/config");
+  records = await api("/api/records");
+  render();
+}
+
+function render() {
+  renderDashboard();
+  renderRecords();
+}
+
+function renderDashboard() {
+  const open = records.filter((record) => !["Done", "Won", "Archived"].includes(record.status)).length;
+  document.getElementById("dashboard").innerHTML = `<h2>Dashboard</h2><div class="metrics"><article><span>Total</span><strong>${records.length}</strong></article><article><span>Open</span><strong>${open}</strong></article><article><span>Closed</span><strong>${records.length - open}</strong></article></div>`;
+}
+
+function renderRecords() {
+  const rows = records.map((record) => `<tr><td>${record.name}</td><td>${record.category}</td><td>${record.contact}</td><td>${record.status}</td><td>${record.notes || ""}</td><td><button data-edit="${record.id}">Edit</button><button data-delete="${record.id}">Delete</button></td></tr>`).join("");
+  document.getElementById("records").innerHTML = `<h2>${config.entity} Records</h2><form id="recordForm" class="record-form"><input id="name" placeholder="${config.entity} name" required /><input id="category" placeholder="${config.categoryLabel}" required /><input id="contact" placeholder="${config.contactLabel}" required /><select id="status"><option>Lead</option><option>Active</option><option>Proposal</option><option>Won</option><option>Done</option><option>Archived</option></select><input id="notes" placeholder="Notes" /><button>Save to SQLite</button></form><table><thead><tr><th>Name</th><th>${config.categoryLabel}</th><th>${config.contactLabel}</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+  bindRecordEvents();
+}
+
+function formData() {
+  return Object.fromEntries(["name", "category", "contact", "status", "notes"].map((id) => [id, document.getElementById(id).value.trim()]));
+}
+
+function bindRecordEvents() {
+  document.getElementById("recordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = formData();
+    if (editingId === null) await api("/api/records", { method: "POST", body: JSON.stringify(data) });
+    else await api(`/api/records/${editingId}`, { method: "PUT", body: JSON.stringify(data) });
+    editingId = null;
+    records = await api("/api/records");
+    render();
+  });
+  document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", async () => {
+    await api(`/api/records/${button.dataset.delete}`, { method: "DELETE" });
+    records = await api("/api/records");
+    render();
+  }));
+  document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => {
+    editingId = Number(button.dataset.edit);
+    const record = records.find((item) => item.id === editingId);
+    ["name", "category", "contact", "status", "notes"].forEach((id) => { document.getElementById(id).value = record[id] || ""; });
+  }));
+}
+
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+  views.forEach((view) => document.getElementById(view).classList.toggle("hidden", view !== button.dataset.view));
+}));
+
+load().catch((error) => { document.body.innerHTML = `<main class="content"><h1>Could not load app</h1><pre>${error.message}</pre></main>`; });
+'''
+
+    css = '''body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#172033}.sidebar{position:fixed;inset:0 auto 0 0;width:245px;background:#102a43;color:white;padding:24px;box-sizing:border-box}.sidebar h1{font-size:24px;line-height:1.2}.sidebar button{display:block;width:100%;margin:8px 0;padding:11px;border:0;border-radius:6px;background:#2563eb;color:white;text-align:left;font-weight:800;cursor:pointer}.content{margin-left:245px;padding:26px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metrics article,section{background:white;border:1px solid #d8e1ec;border-radius:8px;padding:18px;margin-bottom:18px}.metrics strong{display:block;font-size:32px;color:#0f766e}.record-form{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}input,select{border:1px solid #cbd5e1;border-radius:6px;padding:10px;font:inherit}button{border:0;border-radius:6px;background:#7c3aed;color:white;padding:10px 12px;font-weight:800;cursor:pointer}table{width:100%;border-collapse:collapse;background:white}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:10px}.hidden{display:none}pre{background:#0f172a;color:#e2e8f0;padding:16px;overflow:auto}@media(max-width:840px){.sidebar{position:static;width:auto}.content{margin-left:0}.record-form,.metrics{grid-template-columns:1fr}table{font-size:14px}}'''
+
+    readme = f"""# {title} With SQLite Backend
+
+Generated by SHAMSU as a database-backed local system.
+
+## Run
+```powershell
+cd C:\\Users\\HP\\Desktop\\CSE327\\workspace\\{base}
+python -m venv venv
+venv\\Scripts\\activate
+pip install -r requirements.txt
+python -m uvicorn backend.main:app --reload --port 8090
+```
+
+Open `http://127.0.0.1:8090`.
+
+## Verify
+```powershell
+python tests/smoke_test.py
+```
+
+## Data
+The API creates `app.db` automatically using SQLite when the backend starts.
+"""
+    workflow = f"""# Workflow
+
+Prompt: {prompt}
+
+1. Requirement analysis: the prompt asks for a real {title} with persistent data.
+2. Stack choice: FastAPI backend, SQLite database, vanilla JS frontend.
+3. File plan: backend API, database layer, frontend, docs, smoke test.
+4. Verification: Python syntax and smoke test check project structure.
+5. Preview: run uvicorn and open the local URL.
+"""
+    smoke = '''from pathlib import Path
+import py_compile
+
+root = Path(__file__).resolve().parents[1]
+required = [
+    "backend/__init__.py",
+    "backend/main.py",
+    "backend/database.py",
+    "frontend/index.html",
+    "frontend/app.js",
+    "frontend/styles.css",
+    "requirements.txt",
+    "README.md",
+    "WORKFLOW.md",
+]
+missing = [path for path in required if not (root / path).exists()]
+assert not missing, f"Missing files: {missing}"
+py_compile.compile(str(root / "backend" / "main.py"), doraise=True)
+py_compile.compile(str(root / "backend" / "database.py"), doraise=True)
+assert "sqlite3" in (root / "backend" / "database.py").read_text(encoding="utf-8")
+assert "/api/records" in (root / "frontend" / "app.js").read_text(encoding="utf-8")
+print("database smoke passed")
+'''
+
+    files = [
+        {"path": f"{base}/package.json", "content": package_json + "\n"},
+        {"path": f"{base}/requirements.txt", "content": requirements},
+        {"path": f"{base}/README.md", "content": readme},
+        {"path": f"{base}/WORKFLOW.md", "content": workflow},
+        {"path": f"{base}/backend/__init__.py", "content": "# Backend package for the SHAMSU-generated database system.\n"},
+        {"path": f"{base}/backend/database.py", "content": database_py},
+        {"path": f"{base}/backend/main.py", "content": main_py},
+        {"path": f"{base}/frontend/index.html", "content": html},
+        {"path": f"{base}/frontend/app.js", "content": app_js},
+        {"path": f"{base}/frontend/styles.css", "content": css},
+        {"path": f"{base}/tests/smoke_test.py", "content": smoke},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="database-backed-system-generator",
+        steps=["Analyze persistence requirements.", "Choose FastAPI + SQLite + vanilla JS stack.", "Create backend API, database layer, frontend, docs, and smoke test.", "Run Python syntax and file verification.", "Serve with uvicorn for local testing."],
+        suggested_files=files,
+        verify_commands=[f"python {base}/tests/smoke_test.py", f"cd {base} && python -m uvicorn backend.main:app --reload --port 8090"],
+        notes=["SHAMSU generated a database-backed local system, not only a static mockup.", "SQLite keeps the demo self-contained while matching a real backend/API workflow."],
+        requirements_analysis=[f"The prompt asks for a {title}-style system with persistent records.", "A backend API and SQLite database make create/update/delete survive page reloads."],
+        clarification_questions=["Which user roles, authentication rules, and reports should be added next?", "Should the SQLite schema be upgraded to MySQL for final deployment?"],
+        stack=["FastAPI", "SQLite", "Pydantic", "Vanilla JavaScript", "HTML", "CSS", "Python smoke test"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="prompt -> requirement analysis -> choose FastAPI/SQLite stack -> create backend/database/frontend -> smoke verification -> run uvicorn -> iterate",
+    )
 def _multi_file_management_app_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if "student" in lower:
@@ -1542,6 +1903,9 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
+
+
 
 
 
