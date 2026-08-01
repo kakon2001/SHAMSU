@@ -1,4 +1,4 @@
-"""Tool implementations for the agent.
+﻿"""Tool implementations for the agent.
 
 Read-only tools (list_directory, read_file, search_files) execute immediately.
 Mutating tools (run_shell, write_file) are declared here but the agent loop
@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from .. import context_index
+from ..web_search import format_search_results, search_web as run_web_search
 from ..config import settings
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea", ".vscode"}
@@ -143,6 +144,11 @@ def search_files(query: str, path: str = ".") -> str:
 
 def search_context(query: str) -> str:
     return context_index.format_context_results(query)
+
+
+def web_search(query: str) -> str:
+    """Search the public web for current information and return sourced snippets."""
+    return format_search_results(run_web_search(query))
 
 
 
@@ -350,7 +356,7 @@ def make_diff(path: str, new_content: str) -> tuple[str, bool]:
             tofile=f"b/{path}",
         )
     )
-    return diff or "(no changes — file content is identical)", is_new
+    return diff or "(no changes â€” file content is identical)", is_new
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +421,19 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language or keyword query."}
+                },
+                "required": ["query"],
+            },
+        },
+    },    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the public web for current information. Use for latest facts, external docs, or topics not available in workspace/uploaded context. Returns source URLs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query."}
                 },
                 "required": ["query"],
             },
@@ -514,7 +533,8 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "project_index", "project_map"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "web_search", "project_index", "project_map"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
+
 

@@ -1,4 +1,4 @@
-"""Stdio MCP server for the SHAMSU tools.
+﻿"""Stdio MCP server for the SHAMSU tools.
 
 The server exposes sandboxed workspace tools and read-only resources over a
 JSON-RPC/MCP-compatible stdio transport. It supports initialize, ping,
@@ -13,6 +13,7 @@ from typing import Any, Callable
 from urllib.parse import quote, unquote
 
 from app import context_index
+from app.web_search import format_search_results, search_web
 from app.agent import tools
 from app.config import settings
 
@@ -52,6 +53,14 @@ MCP_TOOLS = [
     {
         "name": "search_context",
         "description": "Search chunked workspace and uploaded context for relevant snippets.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}},
+            "required": ["query"],
+        },
+    },    {
+        "name": "web_search",
+        "description": "Search the public web for current information and return sourced snippets.",
         "inputSchema": {
             "type": "object",
             "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}},
@@ -109,6 +118,7 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         "search_context": lambda args: context_index.format_context_results(
             _required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 20)
         ),
+        "web_search": lambda args: format_search_results(search_web(_required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 10))),
         "project_map": lambda args: json.dumps(
             context_index.project_map(limit=_int_arg(args, "limit", 80, 1, 200)),
             ensure_ascii=False,
@@ -275,5 +285,7 @@ def _int_arg(args: dict[str, Any], key: str, default: int, minimum: int, maximum
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
 
 
