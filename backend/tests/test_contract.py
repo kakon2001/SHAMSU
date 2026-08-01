@@ -536,30 +536,42 @@ def test_generic_repair_loop_uses_feedback_to_rewrite_files(tmp_path: Path, monk
     assert any(step.name == "feedback" for step in steps)
     assert any(step.name == "repair-generate" for step in steps)
 
-def test_crm_management_system_template_run_creates_crud_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_crm_management_system_template_run_creates_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a CRM system")
 
-    assert plan.mode == "management-system-generator"
-    assert created == ["crm_system.html"]
-    content = (tmp_path / "crm_system.html").read_text(encoding="utf-8")
-    assert "CRM System" in content
-    assert "localStorage" in content
-    assert "renderRecords" in content
-    assert "editRecord" in content
-    assert "deleteRecord" in content
-    assert "Search records" in content
+    assert plan.mode == "multi-file-project-generator"
+    assert created == [
+        "crm_system/package.json",
+        "crm_system/README.md",
+        "crm_system/WORKFLOW.md",
+        "crm_system/index.html",
+        "crm_system/src/main.js",
+        "crm_system/src/views.js",
+        "crm_system/src/state.js",
+        "crm_system/src/data.js",
+        "crm_system/src/styles.css",
+        "crm_system/tests/smoke_test.py",
+    ]
+    assert "JavaScript modules" in plan.stack
+    assert "crm_system/src/state.js" in plan.file_plan
+    assert "multi-file" in plan.notes[0]
+    assert "CRM System" in (tmp_path / "crm_system" / "index.html").read_text(encoding="utf-8")
+    assert "localStorage" in (tmp_path / "crm_system" / "src" / "state.js").read_text(encoding="utf-8")
+    assert "recordsTable" in (tmp_path / "crm_system" / "src" / "views.js").read_text(encoding="utf-8")
+    assert "smoke passed" in (tmp_path / "crm_system" / "tests" / "smoke_test.py").read_text(encoding="utf-8")
 
 
-def test_student_management_system_template_run_creates_targeted_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_student_management_system_template_run_creates_targeted_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a student management system")
 
-    assert plan.mode == "management-system-generator"
-    assert created == ["student_management_system.html"]
-    content = (tmp_path / "student_management_system.html").read_text(encoding="utf-8")
-    assert "Student Management System" in content
-    assert "Program" in content
-    assert "Active" in content
-    assert "deleteRecord" in content
+    assert plan.mode == "multi-file-project-generator"
+    assert "student_management_system/index.html" in created
+    assert "student_management_system/src/data.js" in created
+    assert "student_management_system/tests/smoke_test.py" in created
+    data = (tmp_path / "student_management_system" / "src" / "data.js").read_text(encoding="utf-8")
+    assert "Student Management System" in data
+    assert "Program" in data
+    assert "Active" in data
 
 
 def test_website_prompt_creates_previewable_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
