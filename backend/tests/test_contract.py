@@ -171,6 +171,26 @@ def test_session_create_state_activity_and_delete(backend_server: None) -> None:
     assert deleted == {"ok": True}
 
 
+
+def test_git_dashboard_read_only_endpoints(backend_server: None) -> None:
+    status = request("GET", "/api/git/status")
+    assert status["ok"] is True
+    assert "branch" in status
+    assert "files" in status
+
+    log = request("GET", "/api/git/log?limit=3")
+    assert isinstance(log["commits"], list)
+    if log["commits"]:
+        assert "hash" in log["commits"][0]
+        assert "subject" in log["commits"][0]
+
+    search = request("GET", "/api/git/search?query=SHAMSU&limit=5")
+    assert search["query"] == "SHAMSU"
+    assert isinstance(search["hits"], list)
+
+    diff = request("GET", "/api/git/diff")
+    assert "diff" in diff
+    assert "truncated" in diff
 def test_context_summary_dashboard_search_and_project_map(backend_server: None, test_env: dict[str, str]) -> None:
     workspace = Path(test_env["AGENT_WORKDIR"])
     (workspace / "package.json").write_text('{"dependencies":{"react":"latest","vite":"latest"}}', encoding="utf-8")
@@ -417,6 +437,7 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None, test_env: dict
 
 
 def test_preview_server_start_status_and_stop(backend_server: None) -> None:
+    request("POST", "/api/preview/stop")
     state = request("POST", "/api/preview/start", {"path": "sample.py", "port": 19090})
     assert state["running"] is True
     assert state["port"] == 19090

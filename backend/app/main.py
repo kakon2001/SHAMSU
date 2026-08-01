@@ -1,4 +1,4 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db, model_registry
 from .agent.session_manager import manager
 from .config import settings
-from .routes import admin, agent, auth, context, files, models, preview, tasks, uploads, workflows
+from .routes import admin, agent, auth, context, files, git as git_routes, models, preview, tasks, uploads, workflows
 
 
 def configure_activity_logging() -> None:
@@ -37,7 +37,7 @@ app = FastAPI(title="SHAMSU", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
-    # The dev server may be opened as localhost or 127.0.0.1 â€” allow both on any port.
+    # The dev server may be opened as localhost or 127.0.0.1 — allow both on any port.
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,6 +48,7 @@ app.include_router(admin.router)
 app.include_router(agent.router)
 app.include_router(context.router)
 app.include_router(files.router)
+app.include_router(git_routes.router)
 app.include_router(models.router)
 app.include_router(preview.router)
 app.include_router(tasks.router)
