@@ -199,6 +199,10 @@ function App() {
           ? `\n\nVerification steps:\n${result.steps.slice(0, 8).map((step) => `- ${step.name}: ${step.status} - ${step.detail}`).join("\n")}`
           : "";
         const noteText = result.notes.length ? `\n\nNotes:\n${result.notes.map((note) => `- ${note}`).join("\n")}` : "";
+        const reliability = result.reliability;
+        const reliabilityText = reliability
+          ? `\n\nReliability loop:\n${reliability.phases.map((phase) => `- ${phase}`).join("\n")}\n- final: ${reliability.final_status}\n- repair attempts: ${reliability.repair_attempts}\n- next: ${reliability.next_action}`
+          : "";
         const summary = [
           result.ok ? "Build completed." : "Build needs follow-up.",
           `Mode: ${result.mode}.`,
@@ -211,6 +215,7 @@ function App() {
           + section("File plan", result.file_plan)
           + workflowText
           + stepText
+          + reliabilityText
           + noteText;
         setAutoBuildItems((prev) => prev.map((item) => item.id === `${id}-working` ? { ...item, content: summary } : item));
         setNotice(`${result.ok ? "Autonomous build completed." : "Autonomous build needs follow-up."} ${fileText}`);

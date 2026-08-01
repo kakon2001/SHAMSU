@@ -1,4 +1,4 @@
-﻿export interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   name: string;
@@ -151,6 +151,14 @@ export interface PreviewState {
   message: string;
 }
 
+
+export interface ReliabilityReport {
+  phases: string[];
+  verification_feedback: string[];
+  repair_attempts: number;
+  final_status: string;
+  next_action: string;
+}
 export interface TaskRunStep {
   name: string;
   status: string;
@@ -170,6 +178,7 @@ export interface TaskRunResponse {
   stack?: string[];
   file_plan?: string[];
   workflow_summary?: string;
+  reliability?: ReliabilityReport | null;
 }
 
 
