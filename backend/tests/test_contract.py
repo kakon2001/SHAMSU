@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
@@ -23,7 +24,7 @@ def request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
     req = urllib.request.Request(
         API_BASE + path,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Connection": "close"},
         method=method,
     )
     with urllib.request.urlopen(req, timeout=30) as response:
@@ -123,7 +124,7 @@ def test_email_auth_and_user_session_isolation(backend_server: None) -> None:
         req = urllib.request.Request(
             API_BASE + path,
             data=data,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}", "Connection": "close"},
             method=method,
         )
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -436,20 +437,23 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None, test_env: dict
 
 
 
-def test_preview_server_start_status_and_stop(backend_server: None) -> None:
-    request("POST", "/api/preview/stop")
-    state = request("POST", "/api/preview/start", {"path": "sample.py", "port": 19090})
-    assert state["running"] is True
-    assert state["port"] == 19090
-    assert state["url"] == "http://127.0.0.1:19090/sample.py"
+def test_preview_server_start_status_and_stop(test_env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import preview
 
-    status = request("GET", "/api/preview/status?path=sample.py&port=19090")
-    assert status["running"] is True
-    assert status["url"] == "http://127.0.0.1:19090/sample.py"
+    monkeypatch.setattr(preview.settings, "agent_workdir", test_env["AGENT_WORKDIR"])
+    asyncio.run(preview.stop_preview())
 
-    stopped = request("POST", "/api/preview/stop")
-    assert stopped["message"] in {"Managed preview server stopped.", "No managed preview server was running."}
+    state = asyncio.run(preview.start_preview(preview.PreviewStartRequest(path="sample.py", port=19090)))
+    assert state.running is True
+    assert state.port == 19090
+    assert state.url == "http://127.0.0.1:19090/sample.py"
 
+    status = asyncio.run(preview.preview_status(path="sample.py", port=19090))
+    assert status.running is True
+    assert status.url == "http://127.0.0.1:19090/sample.py"
+
+    stopped = asyncio.run(preview.stop_preview())
+    assert stopped.message in {"Managed preview server stopped.", "No managed preview server was running."}
 def _write_and_verify_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str) -> tuple[Any, list[str], list[Any]]:
     from app.routes import tasks
 
@@ -777,6 +781,71 @@ def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -
 
 
 
+
+
+
+
+
+
+
+def test_web_search_parser_extracts_sourced_results() -> None:
+    from app.web_search import format_search_results, parse_duckduckgo_html
+
+    html = """
+    <html><body>
+      <a class="result__a" href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fdocs">Example Docs</a>
+      <a class="result__snippet">Useful docs snippet for SHAMSU.</a>
+      <a class="result__a" href="https://example.org/news">Example News</a>
+      <div class="result__snippet">Current information snippet.</div>
+    </body></html>
+    """
+
+    results = parse_duckduckgo_html(html, limit=5)
+    assert len(results) == 2
+    assert results[0].title == "Example Docs"
+    assert results[0].url == "https://example.com/docs"
+    assert results[0].snippet == "Useful docs snippet for SHAMSU."
+
+    formatted = format_search_results({"ok": True, "query": "shamsu", "results": [result.__dict__ for result in results]})
+    assert "Web search results for: shamsu" in formatted
+    assert "https://example.com/docs" in formatted
+
+
+def test_web_search_empty_query_returns_error() -> None:
+    from app.web_search import search_web
+
+    result = search_web("   ")
+    assert result["ok"] is False
+    assert result["error"] == "Query is required."
+
+
+def test_web_search_route_rejects_missing_query() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    response = TestClient(app).get("/api/web/search")
+    assert response.status_code == 422
+def test_agent_and_mcp_expose_web_search_tool(test_env: dict[str, str]) -> None:
+    from app.agent.tools import READ_ONLY_TOOLS, TOOL_NAMES, TOOL_SCHEMAS
+
+    assert "web_search" in READ_ONLY_TOOLS
+    assert "web_search" in TOOL_NAMES
+    assert any(schema["function"]["name"] == "web_search" for schema in TOOL_SCHEMAS)
+
+    proc = subprocess.run(
+        [sys.executable, "mcp_server.py"],
+        input='{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    tool_names = {tool["name"] for tool in payload["result"]["tools"]}
+    assert "web_search" in tool_names
 
 
 

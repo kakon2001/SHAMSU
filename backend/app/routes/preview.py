@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import socket
 import subprocess
@@ -111,8 +111,11 @@ def _validate_preview_path(path: str) -> str:
 
 
 def _state(port: int, path: str, message: str, managed: Optional[bool] = None) -> PreviewState:
-    running = _process_running(_preview_process) or _port_open("127.0.0.1", port)
-    is_managed = _process_running(_preview_process) if managed is None else managed
+    managed_running = _process_running(_preview_process)
+    # If SHAMSU started the preview server, trust the process state first.
+    # Probing the same single-threaded http.server port can stall on Windows.
+    running = managed_running if managed_running and (_preview_port is None or _preview_port == port) else _port_open("127.0.0.1", port)
+    is_managed = managed_running if managed is None else managed
     url_path = f"/{path}" if path else "/"
     return PreviewState(
         running=running,
@@ -140,3 +143,4 @@ def _creationflags() -> int:
     if sys.platform.startswith("win"):
         return subprocess.CREATE_NO_WINDOW
     return 0
+
