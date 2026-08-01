@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -630,6 +630,24 @@ def test_autonomous_task_template_writes_and_verifies_game(tmp_path: Path, monke
     assert "<canvas" in content
     assert "requestAnimationFrame" in content
     assert any(step.name == "verify" and step.status == "ok" for step in steps)
+
+def test_autonomous_task_returns_reliability_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import tasks
+
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    plan = tasks.build_plan("make a bouncing ball game")
+    steps: list[tasks.TaskRunStep] = [tasks.TaskRunStep(name="plan", status="ok", detail="Selected game-generator workflow.")]
+    created = tasks._write_suggested_files(plan, overwrite=True, steps=steps)
+    ok = tasks._verify_created_files(plan, created, steps)
+
+    report = tasks._build_reliability_report(steps, created, ok)
+
+    assert report.final_status == "verified"
+    assert report.repair_attempts == 0
+    assert any(phase.startswith("plan: ok") for phase in report.phases)
+    assert any(phase.startswith("write: ok") for phase in report.phases)
+    assert any(phase.startswith("verify: ok") for phase in report.phases)
+    assert "Open the preview" in report.next_action
 def test_task_plan_returns_bouncing_ball_template() -> None:
     from app.routes.tasks import build_plan
 

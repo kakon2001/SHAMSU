@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -6,7 +6,7 @@ from typing import Any
 
 import ollama
 from fastapi import APIRouter
-from pydantic import BaseModel, Field, Field
+from pydantic import BaseModel, Field
 
 from .. import model_registry
 from ..agent import tools
@@ -51,6 +51,14 @@ class TaskRunStep(BaseModel):
     detail: str
 
 
+class ReliabilityReport(BaseModel):
+    phases: list[str]
+    verification_feedback: list[str]
+    repair_attempts: int
+    final_status: str
+    next_action: str
+
+
 class TaskRunResponse(BaseModel):
     goal: str
     mode: str
@@ -64,6 +72,7 @@ class TaskRunResponse(BaseModel):
     stack: list[str] = Field(default_factory=list)
     file_plan: list[str] = Field(default_factory=list)
     workflow_summary: str = ""
+    reliability: ReliabilityReport | None = None
 
 
 @router.post("/plan", response_model=TaskPlanResponse)
@@ -110,6 +119,7 @@ async def run_task(body: TaskRunRequest) -> TaskRunResponse:
             stack=plan.stack,
             file_plan=plan.file_plan,
             workflow_summary=plan.workflow_summary,
+            reliability=_build_reliability_report(steps, created_files, False),
         )
 
     verify_ok, plan, created_files = await _verify_and_repair_loop(body.prompt, plan, created_files, steps)
@@ -128,9 +138,53 @@ async def run_task(body: TaskRunRequest) -> TaskRunResponse:
         stack=plan.stack,
         file_plan=plan.file_plan,
         workflow_summary=plan.workflow_summary,
+        reliability=_build_reliability_report(steps, created_files, verify_ok),
     )
 
 
+
+def _build_reliability_report(steps: list[TaskRunStep], created_files: list[str], ok: bool) -> ReliabilityReport:
+    phase_order = ["plan", "generate", "validate", "write", "verify", "feedback", "repair", "repair-generate", "preview"]
+    phases: list[str] = []
+    for phase in phase_order:
+        phase_steps = [step for step in steps if step.name == phase]
+        if not phase_steps:
+            continue
+        status = _phase_status(phase_steps)
+        detail = phase_steps[-1].detail
+        phases.append(f"{phase}: {status} - {detail}")
+
+    feedback = [step.detail for step in steps if step.name == "feedback"]
+    repair_attempts = len([step for step in steps if step.name in {"repair", "repair-generate"} and step.status != "skipped"])
+    if ok:
+        next_action = "Open the preview or inspect the generated files, then ask SHAMSU for changes if needed."
+        final_status = "verified"
+    elif created_files:
+        next_action = "Read the verification feedback, repair the smallest affected file or block, then run verification again."
+        final_status = "needs-repair"
+    else:
+        next_action = "Clarify the request or ask for a smaller first version so SHAMSU can create a valid file plan."
+        final_status = "blocked"
+    return ReliabilityReport(
+        phases=phases,
+        verification_feedback=feedback,
+        repair_attempts=repair_attempts,
+        final_status=final_status,
+        next_action=next_action,
+    )
+
+
+def _phase_status(steps: list[TaskRunStep]) -> str:
+    statuses = {step.status for step in steps}
+    if "error" in statuses:
+        return "error"
+    if "warning" in statuses:
+        return "warning"
+    if "ok" in statuses:
+        return "ok"
+    if "skipped" in statuses:
+        return "skipped"
+    return steps[-1].status
 def build_plan(prompt: str) -> TaskPlanResponse:
     prompt = prompt.strip()
     lower = prompt.lower()
