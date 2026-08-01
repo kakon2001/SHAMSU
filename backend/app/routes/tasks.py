@@ -212,6 +212,8 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _multi_file_management_app_plan(prompt)
     if _looks_like_website_request(lower):
         return _website_prototype_plan(prompt)
+    if _wants_full_stack(lower) and _looks_like_system_request(lower):
+        return _full_stack_project_plan(prompt)
     if _looks_like_system_request(lower):
         return _starter_system_plan(prompt)
     if any(word in lower for word in ["bug", "fix", "error", "traceback", "failing"]):
@@ -242,6 +244,10 @@ def _looks_like_system_request(text: str) -> bool:
 
 def _wants_database_backing(text: str) -> bool:
     return bool(re.search(r"\b(database|db|sqlite|backend|api|full[- ]?stack|persistent|server)\b", text))
+
+
+def _wants_full_stack(text: str) -> bool:
+    return bool(re.search(r"\b(full[- ]?stack|frontend.*backend|backend.*frontend|api.*frontend|frontend.*api)\b", text))
 
 
 def _slug_from_prompt(prompt: str, fallback: str, suffix: str) -> str:
@@ -663,6 +669,328 @@ document.getElementById('contactForm').addEventListener('submit', (event) => {
     )
 
 
+
+def _full_stack_project_plan(prompt: str) -> TaskPlanResponse:
+    base = _slug_from_prompt(prompt, "full_stack", "project").removesuffix(".html")
+    base = re.sub(r"(^|_)full(_|-)?stack(_|$)", "_", base).strip("_") or "full_stack_project"
+    if not base.endswith("project") and not base.endswith("system") and not base.endswith("app"):
+        base = f"{base}_app"
+    title = base.replace("_", " ").title()
+    entity = _entity_from_project_title(title)
+    config = {"title": title, "entity": entity, "categoryLabel": "Category", "contactLabel": "Owner"}
+    seed_records = [
+        {"name": f"Sample {entity} One", "category": "Planning", "contact": "owner@example.test", "status": "Open", "notes": "Created by SHAMSU."},
+        {"name": f"Sample {entity} Two", "category": "Delivery", "contact": "team@example.test", "status": "Done", "notes": "Verified demo record."},
+    ]
+    requirements = "fastapi\nuvicorn[standard]\npydantic\n"
+    package_json = json.dumps(
+        {
+            "name": base,
+            "version": "0.1.0",
+            "private": True,
+            "scripts": {
+                "dev": "python -m uvicorn backend.main:app --reload --port 8090",
+                "smoke": "python tests/smoke_test.py",
+            },
+        },
+        indent=2,
+    )
+    database_py = '''from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+DB_PATH = Path(__file__).resolve().parents[1] / "app.db"
+SEED_RECORDS = __SEED_RECORDS__
+
+
+def connect() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db() -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                contact TEXT NOT NULL,
+                status TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        count = connection.execute("SELECT COUNT(*) AS total FROM items").fetchone()["total"]
+        if count == 0:
+            connection.executemany(
+                "INSERT INTO items (name, category, contact, status, notes) VALUES (:name, :category, :contact, :status, :notes)",
+                SEED_RECORDS,
+            )
+        connection.commit()
+
+
+def to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def list_items() -> list[dict[str, Any]]:
+    with connect() as connection:
+        rows = connection.execute("SELECT * FROM items ORDER BY id DESC").fetchall()
+    return [to_dict(row) for row in rows]
+
+
+def create_item(data: dict[str, str]) -> dict[str, Any]:
+    with connect() as connection:
+        cursor = connection.execute(
+            "INSERT INTO items (name, category, contact, status, notes) VALUES (?, ?, ?, ?, ?)",
+            (data["name"], data["category"], data["contact"], data["status"], data.get("notes", "")),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM items WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return to_dict(row)
+
+
+def update_item(item_id: int, data: dict[str, str]) -> dict[str, Any] | None:
+    with connect() as connection:
+        connection.execute(
+            "UPDATE items SET name = ?, category = ?, contact = ?, status = ?, notes = ? WHERE id = ?",
+            (data["name"], data["category"], data["contact"], data["status"], data.get("notes", ""), item_id),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    return to_dict(row) if row else None
+
+
+def delete_item(item_id: int) -> bool:
+    with connect() as connection:
+        cursor = connection.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        connection.commit()
+    return cursor.rowcount > 0
+'''.replace("__SEED_RECORDS__", json.dumps(seed_records, indent=4))
+    main_py = '''from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .database import create_item, delete_item, init_db, list_items, update_item
+
+APP_CONFIG = __APP_CONFIG__
+
+
+class ItemIn(BaseModel):
+    name: str
+    category: str
+    contact: str
+    status: str = "Open"
+    notes: str = ""
+
+
+app = FastAPI(title=APP_CONFIG["title"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "app": APP_CONFIG["title"]}
+
+
+@app.get("/api/config")
+def config() -> dict:
+    return APP_CONFIG
+
+
+@app.get("/api/items")
+def items() -> list[dict]:
+    return list_items()
+
+
+@app.post("/api/items", status_code=201)
+def create(data: ItemIn) -> dict:
+    return create_item(data.model_dump())
+
+
+@app.put("/api/items/{item_id}")
+def update(item_id: int, data: ItemIn) -> dict:
+    item = update_item(item_id, data.model_dump())
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+@app.delete("/api/items/{item_id}")
+def remove(item_id: int) -> dict[str, bool]:
+    if not delete_item(item_id):
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"ok": True}
+
+
+frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+'''.replace("__APP_CONFIG__", json.dumps(config, indent=2))
+    html = '''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__TITLE__</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar"><h1>__TITLE__</h1><button data-view="dashboard">Dashboard</button><button data-view="items">Items</button><button data-view="api">API</button></aside>
+  <main class="content"><section id="dashboard"></section><section id="items"></section><section id="api" class="hidden"><h2>API Routes</h2><pre>GET /api/health\nGET /api/items\nPOST /api/items\nPUT /api/items/{id}\nDELETE /api/items/{id}</pre></section></main>
+  <script src="app.js"></script>
+</body>
+</html>
+'''.replace("__TITLE__", title)
+    app_js = '''let config = null;
+let items = [];
+let editingId = null;
+const panels = ["dashboard", "items", "api"];
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+async function load() {
+  config = await api("/api/config");
+  items = await api("/api/items");
+  render();
+}
+
+function render() {
+  const open = items.filter((item) => !["Done", "Closed", "Archived"].includes(item.status)).length;
+  document.getElementById("dashboard").innerHTML = `<h2>${config.title}</h2><div class="metrics"><article><span>Total</span><strong>${items.length}</strong></article><article><span>Open</span><strong>${open}</strong></article><article><span>Closed</span><strong>${items.length - open}</strong></article></div>`;
+  const rows = items.map((item) => `<tr><td>${item.name}</td><td>${item.category}</td><td>${item.contact}</td><td>${item.status}</td><td>${item.notes || ""}</td><td><button data-edit="${item.id}">Edit</button><button data-delete="${item.id}">Delete</button></td></tr>`).join("");
+  document.getElementById("items").innerHTML = `<h2>${config.entity} List</h2><form id="itemForm" class="record-form"><input id="name" placeholder="${config.entity} name" required /><input id="category" placeholder="${config.categoryLabel}" required /><input id="contact" placeholder="${config.contactLabel}" required /><select id="status"><option>Open</option><option>Active</option><option>Done</option><option>Closed</option><option>Archived</option></select><input id="notes" placeholder="Notes" /><button>Save</button></form><table><thead><tr><th>Name</th><th>${config.categoryLabel}</th><th>${config.contactLabel}</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+  bindEvents();
+}
+
+function readForm() {
+  return Object.fromEntries(["name", "category", "contact", "status", "notes"].map((id) => [id, document.getElementById(id).value.trim()]));
+}
+
+function bindEvents() {
+  document.getElementById("itemForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = JSON.stringify(readForm());
+    if (editingId === null) await api("/api/items", { method: "POST", body });
+    else await api(`/api/items/${editingId}`, { method: "PUT", body });
+    editingId = null;
+    items = await api("/api/items");
+    render();
+  });
+  document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", async () => {
+    await api(`/api/items/${button.dataset.delete}`, { method: "DELETE" });
+    items = await api("/api/items");
+    render();
+  }));
+  document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => {
+    editingId = Number(button.dataset.edit);
+    const item = items.find((entry) => entry.id === editingId);
+    ["name", "category", "contact", "status", "notes"].forEach((id) => { document.getElementById(id).value = item[id] || ""; });
+  }));
+}
+
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+  panels.forEach((panel) => document.getElementById(panel).classList.toggle("hidden", panel !== button.dataset.view));
+}));
+
+load().catch((error) => { document.body.innerHTML = `<main class="content"><h1>Could not load app</h1><pre>${error.message}</pre></main>`; });
+'''
+    css = '''body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#172033}.sidebar{position:fixed;inset:0 auto 0 0;width:245px;background:#102a43;color:white;padding:24px;box-sizing:border-box}.sidebar h1{font-size:24px;line-height:1.2}.sidebar button{display:block;width:100%;margin:8px 0;padding:11px;border:0;border-radius:6px;background:#2563eb;color:white;text-align:left;font-weight:800;cursor:pointer}.content{margin-left:245px;padding:26px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metrics article,section{background:white;border:1px solid #d8e1ec;border-radius:8px;padding:18px;margin-bottom:18px}.metrics strong{display:block;font-size:32px;color:#0f766e}.record-form{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}input,select{border:1px solid #cbd5e1;border-radius:6px;padding:10px;font:inherit}button{border:0;border-radius:6px;background:#7c3aed;color:white;padding:10px 12px;font-weight:800;cursor:pointer}table{width:100%;border-collapse:collapse;background:white}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:10px}.hidden{display:none}pre{background:#0f172a;color:#e2e8f0;padding:16px;overflow:auto}@media(max-width:840px){.sidebar{position:static;width:auto}.content{margin-left:0}.record-form,.metrics{grid-template-columns:1fr}table{font-size:14px}}'''
+    readme = f"""# {title}
+
+Generated by SHAMSU as a generic full-stack local project.
+
+## Run
+```powershell
+cd C:\\Users\\HP\\Desktop\\CSE327\\workspace\\{base}
+python -m venv venv
+venv\\Scripts\\activate
+pip install -r requirements.txt
+python -m uvicorn backend.main:app --reload --port 8090
+```
+
+Open `http://127.0.0.1:8090`.
+
+## Verify
+```powershell
+python tests/smoke_test.py
+```
+"""
+    workflow = f"""# Workflow
+
+Prompt: {prompt}
+
+1. Requirement analysis: user requested a full-stack app, so SHAMSU creates frontend, backend, API, and database layers.
+2. Stack choice: FastAPI + SQLite + vanilla JavaScript for a self-contained local demo.
+3. File plan: backend API, database module, frontend UI, docs, smoke test.
+4. Verification: Python syntax plus static checks for API/frontend wiring.
+5. Run: uvicorn serves both API and frontend.
+"""
+    smoke = '''from pathlib import Path
+import py_compile
+
+root = Path(__file__).resolve().parents[1]
+required = ["backend/__init__.py", "backend/main.py", "backend/database.py", "frontend/index.html", "frontend/app.js", "frontend/styles.css", "requirements.txt", "README.md", "WORKFLOW.md"]
+missing = [path for path in required if not (root / path).exists()]
+assert not missing, f"Missing files: {missing}"
+py_compile.compile(str(root / "backend" / "main.py"), doraise=True)
+py_compile.compile(str(root / "backend" / "database.py"), doraise=True)
+assert "FastAPI" in (root / "backend" / "main.py").read_text(encoding="utf-8")
+assert "sqlite3" in (root / "backend" / "database.py").read_text(encoding="utf-8")
+assert "/api/items" in (root / "frontend" / "app.js").read_text(encoding="utf-8")
+print("full-stack smoke passed")
+'''
+    files = [
+        {"path": f"{base}/package.json", "content": package_json + "\n"},
+        {"path": f"{base}/requirements.txt", "content": requirements},
+        {"path": f"{base}/README.md", "content": readme},
+        {"path": f"{base}/WORKFLOW.md", "content": workflow},
+        {"path": f"{base}/backend/__init__.py", "content": "# Backend package for the SHAMSU-generated full-stack project.\n"},
+        {"path": f"{base}/backend/database.py", "content": database_py},
+        {"path": f"{base}/backend/main.py", "content": main_py},
+        {"path": f"{base}/frontend/index.html", "content": html},
+        {"path": f"{base}/frontend/app.js", "content": app_js},
+        {"path": f"{base}/frontend/styles.css", "content": css},
+        {"path": f"{base}/tests/smoke_test.py", "content": smoke},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="full-stack-project-generator",
+        steps=["Analyze full-stack requirements.", "Choose frontend/backend/database stack.", "Create FastAPI API, SQLite data layer, frontend UI, docs, and smoke test.", "Verify syntax and API wiring.", "Serve frontend and API with uvicorn."],
+        suggested_files=files,
+        verify_commands=[f"python {base}/tests/smoke_test.py", f"cd {base} && python -m uvicorn backend.main:app --reload --port 8090"],
+        notes=["SHAMSU generated a complete local full-stack scaffold instead of a static-only prototype.", "The generated API and SQLite database are intentionally small so faculty demo setup stays quick."],
+        requirements_analysis=["The prompt explicitly asks for a full-stack system.", "A real backend/API/database layer is needed so changes persist outside browser localStorage."],
+        clarification_questions=["Which authentication roles and permissions should be added next?", "Which reports, filters, and production database should the app support?"],
+        stack=["FastAPI", "SQLite", "Pydantic", "HTML", "CSS", "Vanilla JavaScript", "Python smoke test"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="prompt -> requirement analysis -> choose full-stack stack -> create backend/database/frontend -> smoke verification -> run uvicorn -> iterate",
+    )
+
+
+def _entity_from_project_title(title: str) -> str:
+    for word in ["Clinic", "Student", "Library", "Inventory", "CRM", "Task", "Project", "Order", "Booking"]:
+        if word.lower() in title.lower():
+            return "Customer" if word == "CRM" else word
+    return "Item"
 def _starter_system_plan(prompt: str) -> TaskPlanResponse:
     project = _slug_from_prompt(prompt, "starter", "system").removesuffix(".html")
     title = project.replace("_", " ").title()
@@ -1903,6 +2231,10 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
+
+
+
 
 
 
