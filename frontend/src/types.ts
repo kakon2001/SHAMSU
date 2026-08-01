@@ -111,6 +111,23 @@ export interface ModelState {
 }
 
 
+export interface ConnectorInfo {
+  id: string;
+  name: string;
+  category: string;
+  status: "enabled" | "planned" | "disabled";
+  privacy: string;
+  description: string;
+  capabilities: string[];
+  tools: string[];
+  setup_required: boolean;
+}
+
+export interface ConnectorMarketplace {
+  connectors: ConnectorInfo[];
+  enabled_count: number;
+  planned_count: number;
+}
 export interface WebSearchResult {
   title: string;
   url: string;
@@ -226,6 +243,7 @@ export interface TaskRunResponse {
   workflow_summary?: string;
   reliability?: ReliabilityReport | null;
 }
+
 
 
 

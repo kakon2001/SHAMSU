@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -168,6 +168,11 @@ export function getContextDashboard(): Promise<ContextDashboard> {
 
 
 
+// --------------------------------------------------------------- connectors
+
+export function getConnectors(): Promise<ConnectorMarketplace> {
+  return fetch(`${API_BASE}/api/connectors`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<ConnectorMarketplace>(res));
+}
 // ---------------------------------------------------------------------- web
 
 export function searchWeb(query: string, limit = 5): Promise<WebSearchResponse> {
@@ -210,6 +215,8 @@ export function stopPreviewServer(): Promise<PreviewState> {
 export function runTaskBuild(prompt: string, preview = true): Promise<TaskRunResponse> {
   return post("/api/tasks/run", { prompt, preview, overwrite: true });
 }
+
+
 
 
 
