@@ -851,3 +851,43 @@ def test_agent_and_mcp_expose_web_search_tool(test_env: dict[str, str]) -> None:
 
 
 
+
+
+def test_database_backed_crm_template_creates_fastapi_sqlite_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a CRM system with database backend")
+
+    assert plan.mode == "database-backed-system-generator"
+    assert "FastAPI" in plan.stack
+    assert "SQLite" in plan.stack
+    assert created == [
+        "crm_system_database/package.json",
+        "crm_system_database/requirements.txt",
+        "crm_system_database/README.md",
+        "crm_system_database/WORKFLOW.md",
+        "crm_system_database/backend/__init__.py",
+        "crm_system_database/backend/database.py",
+        "crm_system_database/backend/main.py",
+        "crm_system_database/frontend/index.html",
+        "crm_system_database/frontend/app.js",
+        "crm_system_database/frontend/styles.css",
+        "crm_system_database/tests/smoke_test.py",
+    ]
+    backend_main = (tmp_path / "crm_system_database" / "backend" / "main.py").read_text(encoding="utf-8")
+    database_py = (tmp_path / "crm_system_database" / "backend" / "database.py").read_text(encoding="utf-8")
+    frontend_js = (tmp_path / "crm_system_database" / "frontend" / "app.js").read_text(encoding="utf-8")
+    readme = (tmp_path / "crm_system_database" / "README.md").read_text(encoding="utf-8")
+
+    assert "FastAPI" in backend_main
+    assert "StaticFiles" in backend_main
+    assert "sqlite3" in database_py
+    assert "CREATE TABLE IF NOT EXISTS records" in database_py
+    assert "/api/records" in frontend_js
+    assert "python -m uvicorn backend.main:app" in readme
+
+
+def test_plain_crm_prompt_still_uses_static_multi_file_project() -> None:
+    from app.routes.tasks import build_plan
+
+    plan = build_plan("make a CRM system")
+    assert plan.mode == "multi-file-project-generator"
+    assert all("database.py" not in item["path"] for item in plan.suggested_files)
