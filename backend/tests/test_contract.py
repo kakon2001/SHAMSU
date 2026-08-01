@@ -891,3 +891,43 @@ def test_plain_crm_prompt_still_uses_static_multi_file_project() -> None:
     plan = build_plan("make a CRM system")
     assert plan.mode == "multi-file-project-generator"
     assert all("database.py" not in item["path"] for item in plan.suggested_files)
+
+
+def test_full_stack_prompt_creates_fastapi_sqlite_frontend_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a full-stack clinic app")
+
+    assert plan.mode == "full-stack-project-generator"
+    assert "FastAPI" in plan.stack
+    assert "SQLite" in plan.stack
+    assert created == [
+        "clinic_project/package.json",
+        "clinic_project/requirements.txt",
+        "clinic_project/README.md",
+        "clinic_project/WORKFLOW.md",
+        "clinic_project/backend/__init__.py",
+        "clinic_project/backend/database.py",
+        "clinic_project/backend/main.py",
+        "clinic_project/frontend/index.html",
+        "clinic_project/frontend/app.js",
+        "clinic_project/frontend/styles.css",
+        "clinic_project/tests/smoke_test.py",
+    ]
+    backend_main = (tmp_path / "clinic_project" / "backend" / "main.py").read_text(encoding="utf-8")
+    database_py = (tmp_path / "clinic_project" / "backend" / "database.py").read_text(encoding="utf-8")
+    frontend_js = (tmp_path / "clinic_project" / "frontend" / "app.js").read_text(encoding="utf-8")
+    workflow = (tmp_path / "clinic_project" / "WORKFLOW.md").read_text(encoding="utf-8")
+
+    assert "FastAPI" in backend_main
+    assert "GET /api/health" not in backend_main
+    assert "sqlite3" in database_py
+    assert "CREATE TABLE IF NOT EXISTS items" in database_py
+    assert "/api/items" in frontend_js
+    assert "full-stack app" in workflow
+    assert any("uvicorn" in command for command in plan.verify_commands)
+
+
+def test_non_full_stack_system_still_uses_prototype_generator() -> None:
+    from app.routes.tasks import build_plan
+
+    plan = build_plan("make a clinic system")
+    assert plan.mode == "system-prototype-generator"
