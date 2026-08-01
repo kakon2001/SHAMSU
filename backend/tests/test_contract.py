@@ -931,3 +931,27 @@ def test_non_full_stack_system_still_uses_prototype_generator() -> None:
 
     plan = build_plan("make a clinic system")
     assert plan.mode == "system-prototype-generator"
+
+
+def test_connector_marketplace_lists_enabled_and_planned_tools() -> None:
+    from app.routes.connectors import list_connectors
+
+    result = list_connectors()
+
+    connectors = {connector["id"]: connector for connector in result["connectors"]}
+    assert result["enabled_count"] >= 5
+    assert result["planned_count"] >= 1
+    assert connectors["workspace-files"]["status"] == "enabled"
+    assert connectors["web-search"]["privacy"] == "external-request"
+    assert "web_search" in connectors["web-search"]["tools"]
+    assert connectors["google-drive"]["setup_required"] is True
+
+def test_connector_marketplace_get_single_connector() -> None:
+    from app.routes.connectors import get_connector
+
+    connector = get_connector("mcp-server")
+
+    assert connector["id"] == "mcp-server"
+    assert connector["status"] == "enabled"
+    assert "tools/list" in connector["capabilities"]
+
