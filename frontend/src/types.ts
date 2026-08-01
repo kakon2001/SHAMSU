@@ -110,6 +110,37 @@ export interface ModelState {
   models: LocalModel[];
 }
 
+
+export interface GitFileStatus {
+  code: string;
+  path: string;
+}
+
+export interface GitStatus {
+  ok: boolean;
+  repo_root: string;
+  branch: string;
+  remote: string;
+  clean: boolean;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+}
+
+export interface GitCommit {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitSearchHit {
+  kind: string;
+  path?: string | null;
+  line?: number | null;
+  commit?: string | null;
+  text: string;
+}
 export interface AdminOverview {
   totals: Record<string, number>;
   session_count: number;

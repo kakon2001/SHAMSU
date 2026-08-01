@@ -1,4 +1,4 @@
-﻿.app {
+.app {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1110,4 +1110,24 @@
 .app__logout {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.dashboard-git {
+  border-top: 1px solid #e5e7eb;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.git-search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.git-search-row input {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 9px 10px;
+  font: inherit;
 }

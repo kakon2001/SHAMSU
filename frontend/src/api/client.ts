@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser } from "../types";
+import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -167,6 +167,23 @@ export function getContextDashboard(): Promise<ContextDashboard> {
 }
 
 
+
+// ---------------------------------------------------------------------- git
+
+export function getGitStatus(): Promise<GitStatus> {
+  return fetch(`${API_BASE}/api/git/status`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<GitStatus>(res));
+}
+
+export function getGitLog(limit = 8, query = ""): Promise<{ commits: GitCommit[] }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (query.trim()) params.set("query", query.trim());
+  return fetch(`${API_BASE}/api/git/log?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<{ commits: GitCommit[] }>(res));
+}
+
+export function getGitSearch(query: string, limit = 12): Promise<{ query: string; hits: GitSearchHit[] }> {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  return fetch(`${API_BASE}/api/git/search?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<{ query: string; hits: GitSearchHit[] }>(res));
+}
 // ----------------------------------------------------------------- preview
 
 export function getPreviewStatus(path = "", port = 9000): Promise<PreviewState> {

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import socket
 import subprocess
@@ -75,19 +75,27 @@ async def start_preview(body: PreviewStartRequest) -> PreviewState:
 async def stop_preview() -> PreviewState:
     global _preview_process, _preview_port
     port = _preview_port or 9000
-    if _process_running(_preview_process):
+    was_running = _process_running(_preview_process)
+    if was_running and _preview_process is not None:
         _preview_process.terminate()
         try:
-            _preview_process.wait(timeout=5)
+            _preview_process.wait(timeout=1)
         except subprocess.TimeoutExpired:
             _preview_process.kill()
-            _preview_process.wait(timeout=5)
-        _preview_process = None
-        _preview_port = None
-        return _state(port=port, path="", message="Managed preview server stopped.")
+            try:
+                _preview_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
     _preview_process = None
     _preview_port = None
-    return _state(port=port, path="", message="No managed preview server was running.")
+    return PreviewState(
+        running=False,
+        managed=False,
+        port=port,
+        path="",
+        url=f"http://127.0.0.1:{port}/",
+        message="Managed preview server stopped." if was_running else "No managed preview server was running.",
+    )
 
 
 def _validate_preview_path(path: str) -> str:

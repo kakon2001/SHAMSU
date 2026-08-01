@@ -9,6 +9,9 @@ import {
   getContextDashboard,
   getFileContent,
   getFileTree,
+  getGitLog,
+  getGitSearch,
+  getGitStatus,
   getModels,
   listSessions,
   login,
@@ -22,7 +25,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, ModelState, SessionInfo } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -41,6 +44,10 @@ function App() {
   const [modelState, setModelState] = useState<ModelState | null>(null);
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
+  const [gitSearchQuery, setGitSearchQuery] = useState("");
+  const [gitSearchHits, setGitSearchHits] = useState<GitSearchHit[]>([]);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
@@ -73,12 +80,25 @@ function App() {
   const refreshDashboard = useCallback(() => {
     getAdminOverview().then(setAdminOverview).catch((err: Error) => setNotice(err.message));
     getContextDashboard().then(setContextDashboard).catch((err: Error) => setNotice(err.message));
+    getGitStatus().then(setGitStatus).catch((err: Error) => setNotice(err.message));
+    getGitLog().then((result) => setGitCommits(result.commits)).catch((err: Error) => setNotice(err.message));
   }, []);
 
   const refreshModels = useCallback(() => {
     getModels().then(setModelState).catch((err: Error) => setNotice(err.message));
   }, []);
 
+
+  const runGitSearch = useCallback(() => {
+    const query = gitSearchQuery.trim();
+    if (!query) {
+      setGitSearchHits([]);
+      return;
+    }
+    getGitSearch(query)
+      .then((result) => setGitSearchHits(result.hits))
+      .catch((err: Error) => setNotice(err.message));
+  }, [gitSearchQuery]);
   const changeModel = useCallback((modelId: string) => {
     setCurrentModel(modelId)
       .then((state) => {
@@ -439,6 +459,34 @@ function App() {
                 {(contextDashboard?.largest_files ?? []).slice(0, 5).map((file) => (
                   <div key={file.path}>{file.path} ({file.chars.toLocaleString()} chars)</div>
                 ))}
+              </div>
+            </div>
+          </div>
+          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
+              <strong>Git Dashboard</strong>
+              <span>{gitStatus ? `${gitStatus.branch} · ${gitStatus.clean ? "clean" : `${gitStatus.files.length} changed`}` : "not loaded"}</span>
+            </div>
+            <div className="dashboard-columns">
+              <div>
+                <h3>Changed Files</h3>
+                <div className="dashboard-list">
+                  {(gitStatus?.files ?? []).slice(0, 10).map((file) => <div key={`${file.code}-${file.path}`}>{file.code} {file.path}</div>)}
+                  {gitStatus && gitStatus.files.length === 0 && <div>Working tree clean.</div>}
+                </div>
+                <div className="git-search-row">
+                  <input value={gitSearchQuery} onChange={(e) => setGitSearchQuery(e.target.value)} placeholder="Search code or commits" />
+                  <button className="btn" onClick={runGitSearch}>Search Git</button>
+                </div>
+                <div className="dashboard-list">
+                  {gitSearchHits.slice(0, 8).map((hit, index) => <div key={`${hit.kind}-${index}`}>{hit.kind}: {hit.path ? `${hit.path}${hit.line ? `:${hit.line}` : ""}` : hit.commit?.slice(0, 7)} {hit.text}</div>)}
+                </div>
+              </div>
+              <div>
+                <h3>Recent Commits</h3>
+                <div className="dashboard-list">
+                  {gitCommits.slice(0, 8).map((commit) => <div key={commit.hash}>{commit.hash.slice(0, 7)} {commit.date} {commit.author}: {commit.subject}</div>)}
+                </div>
               </div>
             </div>
           </div>
