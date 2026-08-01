@@ -7,6 +7,7 @@ import {
   deleteSession,
   getAdminOverview,
   getContextDashboard,
+  getConnectors,
   getFileContent,
   getFileTree,
   getGitLog,
@@ -26,7 +27,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -45,6 +46,7 @@ function App() {
   const [modelState, setModelState] = useState<ModelState | null>(null);
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [contextDashboard, setContextDashboard] = useState<ContextDashboard | null>(null);
+  const [connectorMarketplace, setConnectorMarketplace] = useState<ConnectorMarketplace | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
   const [gitSearchQuery, setGitSearchQuery] = useState("");
@@ -84,6 +86,7 @@ function App() {
   const refreshDashboard = useCallback(() => {
     getAdminOverview().then(setAdminOverview).catch((err: Error) => setNotice(err.message));
     getContextDashboard().then(setContextDashboard).catch((err: Error) => setNotice(err.message));
+    getConnectors().then(setConnectorMarketplace).catch((err: Error) => setNotice(err.message));
     getGitStatus().then(setGitStatus).catch((err: Error) => setNotice(err.message));
     getGitLog().then((result) => setGitCommits(result.commits)).catch((err: Error) => setNotice(err.message));
   }, []);
@@ -516,6 +519,31 @@ function App() {
           </div>
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
+              <strong>Tool Marketplace</strong>
+              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled · ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
+            </div>
+            <div className="connector-grid">
+              {(connectorMarketplace?.connectors ?? []).map((connector) => (
+                <article className={`connector-card connector-card--${connector.status}`} key={connector.id}>
+                  <div className="connector-card__top">
+                    <strong>{connector.name}</strong>
+                    <span>{connector.status}</span>
+                  </div>
+                  <p>{connector.description}</p>
+                  <div className="connector-card__meta">
+                    <span>{connector.category}</span>
+                    <span>{connector.privacy}</span>
+                    {connector.setup_required && <span>setup needed</span>}
+                  </div>
+                  <div className="connector-card__tools">
+                    {connector.capabilities.slice(0, 4).map((capability) => <span key={capability}>{capability}</span>)}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
               <strong>Web Search</strong>
               <span>read-only sourced lookup</span>
             </div>
@@ -622,6 +650,8 @@ function App() {
 }
 
 export default App;
+
+
 
 
 
