@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 import {
@@ -12,6 +12,7 @@ import {
   getGitLog,
   getGitSearch,
   getGitStatus,
+  searchWeb,
   getModels,
   listSessions,
   login,
@@ -25,7 +26,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -48,6 +49,9 @@ function App() {
   const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
   const [gitSearchQuery, setGitSearchQuery] = useState("");
   const [gitSearchHits, setGitSearchHits] = useState<GitSearchHit[]>([]);
+  const [webSearchQuery, setWebSearchQuery] = useState("");
+  const [webSearchResults, setWebSearchResults] = useState<WebSearchResult[]>([]);
+  const [webSearchMessage, setWebSearchMessage] = useState("");
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
@@ -99,6 +103,26 @@ function App() {
       .then((result) => setGitSearchHits(result.hits))
       .catch((err: Error) => setNotice(err.message));
   }, [gitSearchQuery]);
+
+  const runWebSearch = useCallback(() => {
+    const query = webSearchQuery.trim();
+    if (!query) {
+      setWebSearchResults([]);
+      setWebSearchMessage("");
+      return;
+    }
+    setWebSearchMessage("Searching the web...");
+    searchWeb(query)
+      .then((result) => {
+        setWebSearchResults(result.results ?? []);
+        setWebSearchMessage(result.ok ? `${result.results.length} sourced result(s).` : result.error ?? "Web search failed.");
+      })
+      .catch((err: Error) => {
+        setWebSearchResults([]);
+        setWebSearchMessage(err.message);
+      });
+  }, [webSearchQuery]);
+
   const changeModel = useCallback((modelId: string) => {
     setCurrentModel(modelId)
       .then((state) => {
@@ -465,7 +489,7 @@ function App() {
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
               <strong>Git Dashboard</strong>
-              <span>{gitStatus ? `${gitStatus.branch} � ${gitStatus.clean ? "clean" : `${gitStatus.files.length} changed`}` : "not loaded"}</span>
+              <span>{gitStatus ? `${gitStatus.branch} · ${gitStatus.clean ? "clean" : `${gitStatus.files.length} changed`}` : "not loaded"}</span>
             </div>
             <div className="dashboard-columns">
               <div>
@@ -488,6 +512,33 @@ function App() {
                   {gitCommits.slice(0, 8).map((commit) => <div key={commit.hash}>{commit.hash.slice(0, 7)} {commit.date} {commit.author}: {commit.subject}</div>)}
                 </div>
               </div>
+            </div>
+          </div>
+          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
+              <strong>Web Search</strong>
+              <span>read-only sourced lookup</span>
+            </div>
+            <div className="web-search-row">
+              <input
+                value={webSearchQuery}
+                onChange={(e) => setWebSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runWebSearch();
+                }}
+                placeholder="Search current docs, news, or references"
+              />
+              <button className="btn" onClick={runWebSearch}>Search Web</button>
+            </div>
+            {webSearchMessage && <div className="web-search-message">{webSearchMessage}</div>}
+            <div className="web-search-results">
+              {webSearchResults.slice(0, 5).map((result) => (
+                <a key={result.url} href={result.url} target="_blank" rel="noreferrer" className="web-result-card">
+                  <strong>{result.title}</strong>
+                  <span>{result.url}</span>
+                  {result.snippet && <p>{result.snippet}</p>}
+                </a>
+              ))}
             </div>
           </div>
         </section>
@@ -571,6 +622,11 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-export interface AuthUser {
+﻿export interface AuthUser {
   id: string;
   email: string;
   name: string;
@@ -111,6 +111,21 @@ export interface ModelState {
 }
 
 
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+}
+
+export interface WebSearchResponse {
+  ok: boolean;
+  query: string;
+  provider: string;
+  results: WebSearchResult[];
+  error?: string;
+  notes?: string[];
+}
 export interface GitFileStatus {
   code: string;
   path: string;
@@ -211,5 +226,6 @@ export interface TaskRunResponse {
   workflow_summary?: string;
   reliability?: ReliabilityReport | null;
 }
+
 
 

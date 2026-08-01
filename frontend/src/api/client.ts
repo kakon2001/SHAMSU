@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -168,6 +168,12 @@ export function getContextDashboard(): Promise<ContextDashboard> {
 
 
 
+// ---------------------------------------------------------------------- web
+
+export function searchWeb(query: string, limit = 5): Promise<WebSearchResponse> {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  return fetch(`${API_BASE}/api/web/search?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<WebSearchResponse>(res));
+}
 // ---------------------------------------------------------------------- git
 
 export function getGitStatus(): Promise<GitStatus> {
@@ -204,6 +210,7 @@ export function stopPreviewServer(): Promise<PreviewState> {
 export function runTaskBuild(prompt: string, preview = true): Promise<TaskRunResponse> {
   return post("/api/tasks/run", { prompt, preview, overwrite: true });
 }
+
 
 
 
