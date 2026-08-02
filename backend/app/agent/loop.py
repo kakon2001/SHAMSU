@@ -469,6 +469,11 @@ class AgentSession:
             if not query:
                 return "Error: 'query' argument is required"
             return tools.search_context(query)
+        if name == "semantic_search":
+            query = args.get("query")
+            if not query:
+                return "Error: 'query' argument is required"
+            return tools.semantic_search(query)
         if name == "web_search":
             query = args.get("query")
             if not query:
@@ -621,6 +626,9 @@ def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
         "workspace",
         "read",
         "search",
+        "vector",
+        "embedding",
+        "semantic",
         "edit",
         "change",
         "write",

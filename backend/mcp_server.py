@@ -12,7 +12,7 @@ import sys
 from typing import Any, Callable
 from urllib.parse import quote, unquote
 
-from app import context_index
+from app import context_index, vector_index
 from app.web_search import format_search_results, search_web
 from app.agent import tools
 from app.config import settings
@@ -58,7 +58,17 @@ MCP_TOOLS = [
             "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}},
             "required": ["query"],
         },
-    },    {
+    },
+    {
+        "name": "semantic_search",
+        "description": "Search the local SQLite vector index by meaning across workspace and uploaded context.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 8}},
+            "required": ["query"],
+        },
+    },
+    {
         "name": "web_search",
         "description": "Search the public web for current information and return sourced snippets.",
         "inputSchema": {
@@ -117,6 +127,9 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         "search_files": lambda args: tools.search_files(_required(args, "query"), str(args.get("path") or ".")),
         "search_context": lambda args: context_index.format_context_results(
             _required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 20)
+        ),
+        "semantic_search": lambda args: vector_index.format_semantic_results(
+            _required(args, "query"), limit=_int_arg(args, "limit", 8, 1, 20)
         ),
         "web_search": lambda args: format_search_results(search_web(_required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 10))),
         "project_map": lambda args: json.dumps(

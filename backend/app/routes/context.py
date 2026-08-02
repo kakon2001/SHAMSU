@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
 
-from .. import context_index
+from .. import context_index, vector_index
 
 router = APIRouter(prefix="/api/context", tags=["context"])
 
@@ -52,3 +53,22 @@ async def context_overview(query: str = Query("")) -> dict[str, object]:
 @router.get("/project-map")
 async def context_project_map(limit: int = Query(80, ge=1, le=200)) -> dict[str, object]:
     return context_index.project_map(limit=limit)
+
+class VectorRebuildRequest(BaseModel):
+    limit_files: int = Field(default=500, ge=1, le=2000)
+
+
+@router.get("/vector/stats")
+async def vector_stats() -> dict[str, object]:
+    return vector_index.stats()
+
+
+@router.post("/vector/rebuild")
+async def vector_rebuild(request: VectorRebuildRequest) -> dict[str, object]:
+    return vector_index.rebuild_index(limit_files=request.limit_files)
+
+
+@router.get("/vector/search")
+async def vector_search(query: str = Query(...), limit: int = Query(8, ge=1, le=20)) -> dict[str, object]:
+    return {"query": query, "matches": vector_index.semantic_search(query, limit=limit)}
+

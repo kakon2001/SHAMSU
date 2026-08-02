@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .. import context_index
+from .. import context_index, vector_index
 from ..web_search import format_search_results, search_web as run_web_search
 from ..config import settings
 
@@ -144,6 +144,10 @@ def search_files(query: str, path: str = ".") -> str:
 
 def search_context(query: str) -> str:
     return context_index.format_context_results(query)
+
+
+def semantic_search(query: str) -> str:
+    return vector_index.format_semantic_results(query)
 
 
 def web_search(query: str) -> str:
@@ -425,7 +429,25 @@ TOOL_SCHEMAS = [
                 "required": ["query"],
             },
         },
-    },    {
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "semantic_search",
+            "description": (
+                "Search the local SQLite vector index by meaning. Use this for vague questions, large projects, "
+                "uploaded documents, or when exact keyword search misses related code."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural language semantic query."}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
         "type": "function",
         "function": {
             "name": "web_search",
@@ -533,7 +555,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "web_search", "project_index", "project_map"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "web_search", "project_index", "project_map"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
 
