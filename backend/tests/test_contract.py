@@ -1145,3 +1145,64 @@ def test_general_explanation_does_not_enable_tools() -> None:
     assert _should_enable_tools("explain photosynthesis simply", []) is False
     assert _should_enable_tools("what is the latest Ollama version?", []) is True
     assert _should_enable_tools("explain this project structure", []) is True
+
+
+def test_fallback_parser_recovers_function_style_tool_calls() -> None:
+    from app.agent.loop import _extract_fallback_tool_call
+
+    shell = _extract_fallback_tool_call('I will run run_shell(command="python app.py") now')
+    assert shell == {"name": "run_shell", "arguments": {"command": "python app.py"}}
+
+    read = _extract_fallback_tool_call("Next call read_file(path='main.py') before editing")
+    assert read == {"name": "read_file", "arguments": {"path": "main.py"}}
+
+    wrapped = _extract_fallback_tool_call('{"function":{"name":"search_files","arguments":{"query":"TODO"}}}')
+    assert wrapped == {"name": "search_files", "arguments": {"query": "TODO"}}
+
+
+def test_tool_loop_marks_verification_after_mutating_tools() -> None:
+    from app.agent.loop import AgentSession
+
+    session = AgentSession(title="tool loop state test")
+    session._update_tool_loop_state("write_file", "Wrote main.py", True)
+    assert session._verification_pending is True
+    assert session._should_continue_for_verification("Done, I created the file.") is True
+
+    session._update_tool_loop_state("run_shell", "[exit code: 1]", True)
+    assert session._verification_pending is True
+    assert session._repair_pending is True
+
+    session._update_tool_loop_state("run_shell", "all good\n[exit code: 0]", True)
+    assert session._verification_pending is False
+    assert session._repair_pending is False
+
+
+def test_tool_loop_supervisor_continues_until_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.agent.loop import AgentSession
+
+    session = AgentSession(title="tool loop supervisor test")
+    session._verification_pending = True
+    responses = iter([
+        ("I created the file.", []),
+        ("", [{"name": "run_shell", "arguments": {"command": "python --version"}}]),
+        ("Verified successfully.", []),
+    ])
+    executed: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_get_model_response() -> tuple[str, list[dict[str, object]]]:
+        return next(responses)
+
+    async def fake_execute_tool(name: str, args: dict[str, object]) -> str:
+        executed.append((name, args))
+        session._update_tool_loop_state(name, "Python 3.13\n[exit code: 0]", True)
+        return "Python 3.13\n[exit code: 0]"
+
+    monkeypatch.setattr(session, "_get_model_response", fake_get_model_response)
+    monkeypatch.setattr(session, "_execute_tool", fake_execute_tool)
+
+    asyncio.run(session._run_loop())
+
+    assert executed == [("run_shell", {"command": "python --version"})]
+    assert any(event.get("type") == "tool_loop_status" for event in session.events)
+    assert session._verification_pending is False

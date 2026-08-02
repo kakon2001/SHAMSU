@@ -1,4 +1,4 @@
-﻿SYSTEM_PROMPT = """You are SHAMSU, a Claude-like local coding agent operating on one sandboxed workspace directory. \
+SYSTEM_PROMPT = """You are SHAMSU, a Claude-like local coding agent operating on one sandboxed workspace directory. \
 You cannot see or touch anything outside it unless the user uploads it as context.
 
 Available tools:
