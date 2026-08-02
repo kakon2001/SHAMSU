@@ -1079,3 +1079,69 @@ def test_vector_index_direct_semantic_search(tmp_path: Path, monkeypatch: pytest
     assert matches
     assert matches[0]["path"] == "auth.py"
     assert "login_user" in matches[0]["preview"]
+
+
+def test_query_policy_routes_general_web_workspace_and_upload() -> None:
+    from app import query_policy
+
+    general = query_policy.classify_query("explain recursion simply", [])
+    assert general.route == "general_model"
+    assert general.enable_tools is False
+
+    web = query_policy.classify_query("search latest React version online", [])
+    assert web.route == "web_search"
+    assert web.use_web_search is True
+    assert web.enable_tools is True
+
+    workspace = query_policy.classify_query("search this project for auth bug", [])
+    assert workspace.route == "workspace_context"
+    assert workspace.use_workspace_context is True
+
+    upload = query_policy.classify_query("what does this uploaded file say?", ["uploads/demo.txt"])
+    assert upload.route == "uploaded_context"
+    assert upload.use_uploaded_context is True
+
+
+def test_agent_context_injects_web_search_for_current_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.loop import AgentSession
+    from app.agent import loop
+
+    monkeypatch.setattr(loop.tools, "web_search", lambda query: "Web search results for: " + query + "\n1. Source\n   https://example.com/current")
+    monkeypatch.setattr(loop.context_index, "conversation_memory", lambda events, query: "")
+    monkeypatch.setattr(loop.context_index, "automatic_summary_context", lambda query: "SHOULD_NOT_USE_PROJECT_SUMMARY")
+    monkeypatch.setattr(loop.context_index, "project_map_context", lambda query: "SHOULD_NOT_USE_PROJECT_MAP")
+    monkeypatch.setattr(loop.context_index, "automatic_context", lambda query: "SHOULD_NOT_USE_WORKSPACE_CONTEXT")
+
+    packet = AgentSession(title="web policy test")._with_file_context("what is the latest Python release?", [])
+
+    assert "Context routing decision: web_search" in packet
+    assert "Public web search context" in packet
+    assert "https://example.com/current" in packet
+    assert "SHOULD_NOT_USE_PROJECT" not in packet
+    assert "SHOULD_NOT_USE_WORKSPACE" not in packet
+
+
+def test_agent_context_uses_workspace_for_project_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.loop import AgentSession
+    from app.agent import loop
+
+    monkeypatch.setattr(loop.tools, "web_search", lambda query: "SHOULD_NOT_SEARCH_WEB")
+    monkeypatch.setattr(loop.context_index, "conversation_memory", lambda events, query: "")
+    monkeypatch.setattr(loop.context_index, "automatic_summary_context", lambda query: "summary context")
+    monkeypatch.setattr(loop.context_index, "project_map_context", lambda query: "project map context")
+    monkeypatch.setattr(loop.context_index, "automatic_context", lambda query: "exact workspace context")
+
+    packet = AgentSession(title="workspace policy test")._with_file_context("search this project for auth bug", [])
+
+    assert "Context routing decision: workspace_context" in packet
+    assert "project map context" in packet
+    assert "exact workspace context" in packet
+    assert "SHOULD_NOT_SEARCH_WEB" not in packet
+
+
+def test_general_explanation_does_not_enable_tools() -> None:
+    from app.agent.loop import _should_enable_tools
+
+    assert _should_enable_tools("explain photosynthesis simply", []) is False
+    assert _should_enable_tools("what is the latest Ollama version?", []) is True
+    assert _should_enable_tools("explain this project structure", []) is True
