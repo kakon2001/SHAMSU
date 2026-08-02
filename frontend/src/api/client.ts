@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -164,6 +164,20 @@ export function getAdminOverview(): Promise<AdminOverview> {
 
 export function getContextDashboard(): Promise<ContextDashboard> {
   return fetch(`${API_BASE}/api/context/dashboard`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<ContextDashboard>(res));
+}
+
+
+export function getVectorStats(): Promise<VectorStats> {
+  return fetch(`${API_BASE}/api/context/vector/stats`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<VectorStats>(res));
+}
+
+export function rebuildVectorIndex(limitFiles = 500): Promise<VectorRebuildResponse> {
+  return post(`/api/context/vector/rebuild`, { limit_files: limitFiles });
+}
+
+export function searchVectorContext(query: string, limit = 8): Promise<VectorSearchResponse> {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  return fetch(`${API_BASE}/api/context/vector/search?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<VectorSearchResponse>(res));
 }
 
 

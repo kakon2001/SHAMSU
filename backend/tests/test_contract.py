@@ -219,6 +219,24 @@ def test_context_summary_dashboard_search_and_project_map(backend_server: None, 
     assert search["query"] == "pytest"
     assert isinstance(search["matches"], list)
 
+    (workspace / "auth_notes.txt").write_text(
+        "Users sign in with email and password. Login creates a session token for authenticated API calls.\n",
+        encoding="utf-8",
+    )
+    rebuilt = request("POST", "/api/context/vector/rebuild", {"limit_files": 100})
+    assert rebuilt["ok"] is True
+    assert rebuilt["chunk_count"] >= 1
+    assert rebuilt["dims"] == 128
+
+    stats = request("GET", "/api/context/vector/stats")
+    assert stats["ready"] is True
+    assert stats["chunk_count"] >= rebuilt["chunk_count"]
+
+    vector_search = request("GET", "/api/context/vector/search?query=authentication%20token&limit=3")
+    assert vector_search["query"] == "authentication token"
+    assert isinstance(vector_search["matches"], list)
+    assert any(match["path"] == "auth_notes.txt" for match in vector_search["matches"])
+
 
 def test_large_file_edit_workflow_plans_ranges_and_verification(backend_server: None, test_env: dict[str, str]) -> None:
     workspace = Path(test_env["AGENT_WORKDIR"])
@@ -323,7 +341,7 @@ def test_mcp_tools_list(test_env: dict[str, str]) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     tool_names = {tool["name"] for tool in payload["result"]["tools"]}
-    assert {"list_directory", "read_file", "search_files", "search_context", "context_summary", "context_overview", "project_map"}.issubset(tool_names)
+    assert {"list_directory", "read_file", "search_files", "search_context", "semantic_search", "context_summary", "context_overview", "project_map"}.issubset(tool_names)
 
 
 def test_cli_sessions_command(backend_server: None, test_env: dict[str, str]) -> None:
@@ -955,3 +973,30 @@ def test_connector_marketplace_get_single_connector() -> None:
     assert connector["status"] == "enabled"
     assert "tools/list" in connector["capabilities"]
 
+
+
+def test_agent_tools_expose_semantic_search() -> None:
+    from app.agent import tools
+
+    names = {schema["function"]["name"] for schema in tools.TOOL_SCHEMAS}
+    assert "semantic_search" in names
+    assert "semantic_search" in tools.READ_ONLY_TOOLS
+
+
+def test_vector_index_direct_semantic_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import vector_index
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(vector_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(vector_index.settings, "history_db_path", str(tmp_path / "sessions.db"))
+    (workspace / "auth.py").write_text("def login_user(email, password):\n    return create_session_token(email)\n", encoding="utf-8")
+    (workspace / "billing.py").write_text("def create_invoice(total):\n    return total\n", encoding="utf-8")
+
+    rebuilt = vector_index.rebuild_index()
+    matches = vector_index.semantic_search("authentication session token", limit=3)
+
+    assert rebuilt["chunk_count"] == 2
+    assert matches
+    assert matches[0]["path"] == "auth.py"
+    assert "login_user" in matches[0]["preview"]

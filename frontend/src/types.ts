@@ -205,6 +205,36 @@ export interface ContextDashboard {
   recent_uploads: Array<{ path: string; chars: number; chunks: number; summary: string; top_terms: string[] }>;
 }
 
+
+export interface VectorStats {
+  file_count: number;
+  chunk_count: number;
+  dims: number;
+  db_path: string;
+  ready: boolean;
+  updated_at?: number;
+}
+
+export interface VectorMatch {
+  path: string;
+  chunk_index: number;
+  start_line: number;
+  end_line: number;
+  score: number;
+  preview: string;
+}
+
+export interface VectorSearchResponse {
+  query: string;
+  matches: VectorMatch[];
+}
+
+export interface VectorRebuildResponse extends VectorStats {
+  ok: boolean;
+  indexed_files: number;
+  indexed_chunks: number;
+}
+
 export interface PreviewState {
   running: boolean;
   managed: boolean;

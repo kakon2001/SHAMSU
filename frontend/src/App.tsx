@@ -7,18 +7,21 @@ import {
   deleteSession,
   getAdminOverview,
   getContextDashboard,
+  getVectorStats,
   getConnectors,
   getFileContent,
   getFileTree,
   getGitLog,
   getGitSearch,
   getGitStatus,
+  searchVectorContext,
   searchWeb,
   getModels,
   listSessions,
   login,
   logout,
   register,
+  rebuildVectorIndex,
   runTaskBuild,
   saveFileContent,
   setAuthToken,
@@ -27,7 +30,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -54,6 +57,11 @@ function App() {
   const [webSearchQuery, setWebSearchQuery] = useState("");
   const [webSearchResults, setWebSearchResults] = useState<WebSearchResult[]>([]);
   const [webSearchMessage, setWebSearchMessage] = useState("");
+  const [vectorStats, setVectorStats] = useState<VectorStats | null>(null);
+  const [vectorQuery, setVectorQuery] = useState("");
+  const [vectorMatches, setVectorMatches] = useState<VectorMatch[]>([]);
+  const [vectorMessage, setVectorMessage] = useState("");
+  const [vectorBusy, setVectorBusy] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
@@ -86,6 +94,7 @@ function App() {
   const refreshDashboard = useCallback(() => {
     getAdminOverview().then(setAdminOverview).catch((err: Error) => setNotice(err.message));
     getContextDashboard().then(setContextDashboard).catch((err: Error) => setNotice(err.message));
+    getVectorStats().then(setVectorStats).catch((err: Error) => setNotice(err.message));
     getConnectors().then(setConnectorMarketplace).catch((err: Error) => setNotice(err.message));
     getGitStatus().then(setGitStatus).catch((err: Error) => setNotice(err.message));
     getGitLog().then((result) => setGitCommits(result.commits)).catch((err: Error) => setNotice(err.message));
@@ -125,6 +134,40 @@ function App() {
         setWebSearchMessage(err.message);
       });
   }, [webSearchQuery]);
+
+
+  const rebuildSemanticIndex = useCallback(() => {
+    setVectorBusy(true);
+    setVectorMessage("Rebuilding vector index...");
+    rebuildVectorIndex()
+      .then((result) => {
+        setVectorStats(result);
+        setVectorMessage(`Indexed ${result.indexed_files} file(s) into ${result.indexed_chunks} vector chunk(s).`);
+        refreshDashboard();
+      })
+      .catch((err: Error) => setVectorMessage(err.message))
+      .finally(() => setVectorBusy(false));
+  }, [refreshDashboard]);
+
+  const runVectorSearch = useCallback(() => {
+    const query = vectorQuery.trim();
+    if (!query) {
+      setVectorMessage("Enter a semantic query first.");
+      return;
+    }
+    setVectorBusy(true);
+    setVectorMessage("Searching vector index...");
+    searchVectorContext(query)
+      .then((result) => {
+        setVectorMatches(result.matches);
+        setVectorMessage(result.matches.length ? `${result.matches.length} semantic match(es).` : "No vector matches found.");
+      })
+      .catch((err: Error) => {
+        setVectorMatches([]);
+        setVectorMessage(err.message);
+      })
+      .finally(() => setVectorBusy(false));
+  }, [vectorQuery]);
 
   const changeModel = useCallback((modelId: string) => {
     setCurrentModel(modelId)
@@ -487,6 +530,38 @@ function App() {
                   <div key={file.path}>{file.path} ({file.chars.toLocaleString()} chars)</div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
+              <strong>Vector Context</strong>
+              <span>{vectorStats ? `${vectorStats.chunk_count} chunks / ${vectorStats.dims} dims` : "not built"}</span>
+            </div>
+            <div className="vector-actions">
+              <button className="btn" onClick={rebuildSemanticIndex} disabled={vectorBusy}>Rebuild Vector Index</button>
+              <div>{vectorStats?.ready ? "semantic index ready" : "semantic index not built yet"}</div>
+            </div>
+            <div className="vector-search-row">
+              <input
+                value={vectorQuery}
+                onChange={(e) => setVectorQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runVectorSearch();
+                }}
+                placeholder="Ask by meaning, for example: login sessions, game controls, database history"
+              />
+              <button className="btn" onClick={runVectorSearch} disabled={vectorBusy}>Semantic Search</button>
+            </div>
+            {vectorMessage && <div className="web-search-message">{vectorMessage}</div>}
+            <div className="vector-results">
+              {vectorMatches.slice(0, 6).map((match) => (
+                <button key={`${match.path}-${match.chunk_index}`} className="vector-result-card" onClick={() => openFile(match.path)}>
+                  <strong>{match.path}:{match.start_line}-{match.end_line}</strong>
+                  <span>score {match.score.toFixed(4)}</span>
+                  <p>{match.preview}</p>
+                </button>
+              ))}
             </div>
           </div>
           <div className="dashboard-git">
