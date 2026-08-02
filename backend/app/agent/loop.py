@@ -328,6 +328,7 @@ class AgentSession:
         policy = query_policy.classify_query(user_message, context_files)
         attached_file_question = policy.use_uploaded_context and query_policy.wants_attached_file(user_message)
         web_context = _web_context_for_policy(policy, user_message)
+        long_context = tools.long_context_bundle(user_message) if policy.use_workspace_context and not attached_file_question else ""
         auto_context = (
             context_index.automatic_context(user_message)
             if policy.use_workspace_context and not attached_file_question
@@ -367,7 +368,9 @@ class AgentSession:
                 "contents first and do not substitute another workspace file unless asked:\n\n"
                 + "\n\n".join(blocks)
             )
-        if project_map_context:
+        if long_context:
+            parts.append("Fused long-context bundle for large-project reasoning:\n\n" + long_context)
+        elif project_map_context:
             parts.append("Compact project architecture map for large-project reasoning:\n\n" + project_map_context)
 
         if summary_context:
@@ -555,6 +558,11 @@ class AgentSession:
             if not query:
                 return "Error: 'query' argument is required"
             return tools.semantic_search(query)
+        if name == "long_context_bundle":
+            query = args.get("query")
+            if not query:
+                return "Error: 'query' argument is required"
+            return tools.long_context_bundle(query)
         if name == "web_search":
             query = args.get("query")
             if not query:

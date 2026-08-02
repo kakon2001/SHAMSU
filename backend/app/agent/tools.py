@@ -1,4 +1,4 @@
-﻿"""Tool implementations for the agent.
+"""Tool implementations for the agent.
 
 Read-only tools (list_directory, read_file, search_files) execute immediately.
 Mutating tools (run_shell, write_file) are declared here but the agent loop
@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .. import context_index, vector_index
+from .. import context_index, vector_index, long_context
 from ..web_search import format_search_results, search_web as run_web_search
 from ..config import settings
 
@@ -148,6 +148,10 @@ def search_context(query: str) -> str:
 
 def semantic_search(query: str) -> str:
     return vector_index.format_semantic_results(query)
+
+
+def long_context_bundle(query: str) -> str:
+    return long_context.format_bundle(query)
 
 
 def web_search(query: str) -> str:
@@ -360,7 +364,7 @@ def make_diff(path: str, new_content: str) -> tuple[str, bool]:
             tofile=f"b/{path}",
         )
     )
-    return diff or "(no changes â€” file content is identical)", is_new
+    return diff or "(no changes — file content is identical)", is_new
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +446,20 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language semantic query."}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "long_context_bundle",
+            "description": "Build a compact fused long-context bundle with project memory, symbol matches, semantic matches, and exact chunks. Use before broad or vague large-project reasoning.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural language project question or task."}
                 },
                 "required": ["query"],
             },
@@ -555,7 +573,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "web_search", "project_index", "project_map"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "long_context_bundle", "web_search", "project_index", "project_map"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
 

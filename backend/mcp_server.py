@@ -1,4 +1,4 @@
-﻿"""Stdio MCP server for the SHAMSU tools.
+"""Stdio MCP server for the SHAMSU tools.
 
 The server exposes sandboxed workspace tools and read-only resources over a
 JSON-RPC/MCP-compatible stdio transport. It supports initialize, ping,
@@ -12,7 +12,7 @@ import sys
 from typing import Any, Callable
 from urllib.parse import quote, unquote
 
-from app import context_index, vector_index
+from app import context_index, vector_index, long_context
 from app.web_search import format_search_results, search_web
 from app.agent import tools
 from app.config import settings
@@ -65,6 +65,15 @@ MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 8}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "long_context_bundle",
+        "description": "Build a fused long-context bundle with project memory, symbols, semantic matches, and exact chunks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "budget": {"type": "integer", "default": 7000}},
             "required": ["query"],
         },
     },
@@ -130,6 +139,9 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         ),
         "semantic_search": lambda args: vector_index.format_semantic_results(
             _required(args, "query"), limit=_int_arg(args, "limit", 8, 1, 20)
+        ),
+        "long_context_bundle": lambda args: long_context.format_bundle(
+            _required(args, "query"), budget=_int_arg(args, "budget", 7000, 2500, 16000)
         ),
         "web_search": lambda args: format_search_results(search_web(_required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 10))),
         "project_map": lambda args: json.dumps(
