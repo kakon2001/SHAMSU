@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import ollama
 
-from .. import context_index, db, model_registry
+from .. import context_index, db, model_registry, query_policy
 from ..config import settings
 from .prompts import SYSTEM_PROMPT
 from . import tools
@@ -291,14 +291,16 @@ class AgentSession:
         long-session memory, relevant summaries, and exact matching chunks so it
         can answer across more project/history context than the raw model window.
         """
-        attached_file_question = bool(context_files) and _asks_about_attached_file(user_message)
+        policy = query_policy.classify_query(user_message, context_files)
+        attached_file_question = policy.use_uploaded_context and query_policy.wants_attached_file(user_message)
+        web_context = _web_context_for_policy(policy, user_message)
         auto_context = (
             context_index.automatic_context(user_message)
-            if not context_files or (_wants_workspace_context(user_message) and not attached_file_question)
+            if policy.use_workspace_context and not attached_file_question
             else ""
         )
-        summary_context = "" if attached_file_question else context_index.automatic_summary_context(user_message)
-        project_map_context = "" if attached_file_question else context_index.project_map_context(user_message)
+        summary_context = "" if attached_file_question or policy.use_web_search else context_index.automatic_summary_context(user_message)
+        project_map_context = "" if attached_file_question or policy.use_web_search else context_index.project_map_context(user_message)
         conversation_memory = context_index.conversation_memory(self.events, user_message)
         labels = context_file_labels or {}
         blocks = []
@@ -311,7 +313,12 @@ class AgentSession:
             source_kind = "Uploaded attachment" if path.startswith("uploads/") else "Workspace attachment"
             blocks.append(f"--- {source_kind}: {label} ({path}) ---\n{content}")
 
-        parts = []
+        parts = [query_policy.format_policy_context(policy)]
+        if web_context:
+            parts.append(
+                "Public web search context for current/external facts. Use the source URLs when answering and say if search failed:\n\n"
+                + web_context
+            )
         if conversation_memory:
             parts.append(
                 "Long-session memory from previous turns. Use this to preserve continuity, "
@@ -336,8 +343,6 @@ class AgentSession:
             )
         if auto_context:
             parts.append("Exact relevant indexed workspace/upload chunks:\n\n" + auto_context)
-        if not parts:
-            return user_message
         return "\n\n".join(parts) + f"\n\nUser request: {user_message}"
     async def _run_loop(self) -> None:
         for _ in range(settings.max_tool_iterations):
@@ -623,6 +628,12 @@ class AgentSession:
             raise TurnStopped()
 
 
+
+
+def _web_context_for_policy(policy: query_policy.QueryPolicy, user_message: str) -> str:
+    if not policy.use_web_search:
+        return ""
+    return tools.web_search(user_message)
 def _preview_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "write_file":
         content = args.get("content") or ""
@@ -631,82 +642,13 @@ def _preview_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _should_enable_tools(user_message: str, context_files: list[str]) -> bool:
-    if context_files:
-        return _wants_mutating_tools(user_message) or _wants_workspace_context(user_message)
-    text = user_message.lower()
-    keywords = {
-        "file",
-        "folder",
-        "workspace",
-        "read",
-        "search",
-        "vector",
-        "embedding",
-        "semantic",
-        "edit",
-        "change",
-        "write",
-        "create",
-        "delete",
-        "save",
-        "run",
-        "test",
-        "fix",
-        "code",
-        "diff",
-        "open",
-        "list",
-        "context",
-        "index",
-        "large",
-        "patch",
-        "summarize",
-        "explain",
-        "project",
-        "web",
-        "internet",
-        "latest",
-        "current",
-        "search online",
-    }
-    return any(keyword in text for keyword in keywords)
+    return query_policy.classify_query(user_message, context_files).enable_tools
 def _wants_mutating_tools(user_message: str) -> bool:
-    text = user_message.lower()
-    keywords = {
-        "edit",
-        "change",
-        "write",
-        "create",
-        "delete",
-        "save",
-        "run",
-        "test",
-        "fix",
-        "execute",
-        "rename",
-        "move",
-        "apply",
-    }
-    return any(keyword in text for keyword in keywords)
+    return query_policy.wants_mutating_tools(user_message)
 
 
 def _wants_workspace_context(user_message: str) -> bool:
-    text = user_message.lower()
-    workspace_keywords = {
-        "workspace",
-        "project",
-        "repo",
-        "repository",
-        "codebase",
-        "folder",
-        "directory",
-        "all files",
-        "other files",
-        "compare",
-        "search",
-        "find in",
-    }
-    return any(keyword in text for keyword in workspace_keywords)
+    return query_policy.wants_workspace_context(user_message)
 
 
 
@@ -729,22 +671,7 @@ def _wants_workspace_context(user_message: str) -> bool:
 
 
 def _asks_about_attached_file(user_message: str) -> bool:
-    text = user_message.lower()
-    phrases = {
-        "this file",
-        "that file",
-        "uploaded file",
-        "attached file",
-        "uploaded pdf",
-        "attached pdf",
-        "the pdf",
-        "the document",
-        "what is this file",
-        "what does this file",
-        "summarize this",
-        "summarise this",
-    }
-    return any(phrase in text for phrase in phrases)
+    return query_policy.wants_attached_file(user_message)
 
 
 def _attachment_label(path: str) -> str:
