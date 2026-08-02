@@ -1289,3 +1289,60 @@ def test_mcp_exposes_long_context_bundle(test_env: dict[str, str]) -> None:
     payload = json.loads(proc.stdout)
     tool_names = {tool["name"] for tool in payload["result"]["tools"]}
     assert "long_context_bundle" in tool_names
+
+
+def test_sql_reporting_schema_query_history_and_blocking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+    from app import reports
+
+    db_path = tmp_path / "sessions.db"
+    monkeypatch.setattr(reports.settings, "history_db_path", str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT, title TEXT, owner_id TEXT)")
+        conn.executemany(
+            "INSERT INTO sessions (id, title, owner_id) VALUES (?, ?, ?)",
+            [("1", "First demo", "local"), ("2", "Faculty report", "local")],
+        )
+        conn.commit()
+
+    schema = reports.schema_overview()
+    table_names = {table["name"] for table in schema["tables"]}
+    assert "sessions" in table_names
+
+    result = reports.run_report_query("SELECT title FROM sessions ORDER BY id", title="Session titles", limit=10)
+    assert result["ok"] is True
+    assert result["columns"] == ["title"]
+    assert result["rows"] == [{"title": "First demo"}, {"title": "Faculty report"}]
+    assert result["saved"] is True
+    assert reports.report_history()[0]["title"] == "Session titles"
+
+    with pytest.raises(ValueError):
+        reports.run_report_query("DELETE FROM sessions")
+
+
+def test_sql_reporting_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+    from fastapi.testclient import TestClient
+    from app import reports
+    from app.main import app
+
+    db_path = tmp_path / "sessions.db"
+    monkeypatch.setattr(reports.settings, "history_db_path", str(db_path))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT, title TEXT)")
+        conn.execute("INSERT INTO sessions (id, title) VALUES ('1', 'Route report')")
+        conn.commit()
+
+    client = TestClient(app)
+    schema = client.get("/api/reports/schema").json()
+    assert any(table["name"] == "sessions" for table in schema["tables"])
+
+    query = client.post("/api/reports/query", json={"sql": "SELECT title FROM sessions", "limit": 5}).json()
+    assert query["row_count"] == 1
+    assert query["rows"][0]["title"] == "Route report"
+
+    blocked = client.post("/api/reports/query", json={"sql": "DROP TABLE sessions"})
+    assert blocked.status_code == 400
+
+    history = client.get("/api/reports/history").json()
+    assert history["reports"][0]["row_count"] == 1
