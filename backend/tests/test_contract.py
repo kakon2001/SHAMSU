@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -1130,11 +1130,13 @@ def test_agent_context_uses_workspace_for_project_questions(monkeypatch: pytest.
     monkeypatch.setattr(loop.context_index, "automatic_summary_context", lambda query: "summary context")
     monkeypatch.setattr(loop.context_index, "project_map_context", lambda query: "project map context")
     monkeypatch.setattr(loop.context_index, "automatic_context", lambda query: "exact workspace context")
+    monkeypatch.setattr(loop.tools, "long_context_bundle", lambda query: "Project memory\n- auth files")
 
     packet = AgentSession(title="workspace policy test")._with_file_context("search this project for auth bug", [])
 
     assert "Context routing decision: workspace_context" in packet
-    assert "project map context" in packet
+    assert "Fused long-context bundle" in packet
+    assert "Project memory" in packet
     assert "exact workspace context" in packet
     assert "SHOULD_NOT_SEARCH_WEB" not in packet
 
@@ -1206,3 +1208,84 @@ def test_tool_loop_supervisor_continues_until_verification(monkeypatch: pytest.M
     assert executed == [("run_shell", {"command": "python --version"})]
     assert any(event.get("type") == "tool_loop_status" for event in session.events)
     assert session._verification_pending is False
+
+
+def test_long_context_bundle_combines_memory_symbols_and_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import long_context
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(long_context.context_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "history_db_path", str(tmp_path / "sessions.db"))
+    (workspace / "auth_service.py").write_text(
+        "def login_user(email, password):\n    return create_session_token(email)\n\ndef create_session_token(email):\n    return email + '-token'\n",
+        encoding="utf-8",
+    )
+    (workspace / "README.md").write_text("# Auth project\nHandles login and session token behavior.\n", encoding="utf-8")
+    long_context.vector_index.rebuild_index()
+
+    bundle = long_context.build_bundle("fix login session token", budget=5000)
+    context = str(bundle["context"])
+
+    assert "Project memory" in context
+    assert "Symbol matches" in context
+    assert "Semantic matches" in context
+    assert "Exact keyword chunks" in context
+    assert any(item["symbol"] == "login_user" for item in bundle["symbols"])
+    assert "auth_service.py" in context
+
+
+def test_context_bundle_route_and_agent_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+    from app.agent import tools
+    from app.main import app
+    from app import long_context
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(long_context.context_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "history_db_path", str(tmp_path / "sessions.db"))
+    (workspace / "long_context_auth.py").write_text("def login_user():\n    return 'session token'\n", encoding="utf-8")
+
+    result = TestClient(app).get("/api/context/bundle", params={"query": "login session token", "budget": 5000}).json()
+
+    assert result["query"] == "login session token"
+    assert "context" in result
+    assert "login" in result["context"].lower()
+    assert "long_context_bundle" in tools.READ_ONLY_TOOLS
+    assert "Project memory" in tools.long_context_bundle("login session token")
+
+
+def test_agent_injects_long_context_for_workspace_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.loop import AgentSession
+    from app.agent import loop
+
+    monkeypatch.setattr(loop.tools, "long_context_bundle", lambda query: "Project memory\n- app.py important")
+    monkeypatch.setattr(loop.context_index, "automatic_context", lambda query: "exact context")
+    monkeypatch.setattr(loop.context_index, "automatic_summary_context", lambda query: "summary context")
+    monkeypatch.setattr(loop.context_index, "project_map_context", lambda query: "old project map")
+    monkeypatch.setattr(loop.context_index, "conversation_memory", lambda events, query: "")
+
+    packet = AgentSession(title="long context agent test")._with_file_context("explain this project structure", [])
+
+    assert "Fused long-context bundle" in packet
+    assert "Project memory" in packet
+    assert "old project map" not in packet
+
+
+def test_mcp_exposes_long_context_bundle(test_env: dict[str, str]) -> None:
+    proc = subprocess.run(
+        [sys.executable, "mcp_server.py"],
+        input='{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    tool_names = {tool["name"] for tool in payload["result"]["tools"]}
+    assert "long_context_bundle" in tool_names
