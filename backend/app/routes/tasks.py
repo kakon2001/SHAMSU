@@ -77,7 +77,7 @@ class TaskRunResponse(BaseModel):
 
 @router.post("/plan", response_model=TaskPlanResponse)
 async def plan_task(body: TaskPlanRequest) -> TaskPlanResponse:
-    return build_plan(body.prompt)
+    return _with_advisory(build_plan(body.prompt), body.prompt)
 
 
 @router.post("/run", response_model=TaskRunResponse)
@@ -87,14 +87,14 @@ async def run_task(body: TaskRunRequest) -> TaskRunResponse:
     Known safe templates run deterministically. Unknown build prompts fall back to
     a strict JSON file generator powered by the selected local Ollama model.
     """
-    plan = build_plan(body.prompt)
-    steps: list[TaskRunStep] = [TaskRunStep(name="plan", status="ok", detail=f"Selected {plan.mode} workflow.")]
+    plan = _with_advisory(build_plan(body.prompt), body.prompt)
+    steps: list[TaskRunStep] = [TaskRunStep(name="plan", status="ok", detail=f"Analyzed request and selected {plan.mode} workflow.")]
     notes = list(plan.notes)
 
     if not plan.suggested_files and _looks_like_build_request(body.prompt):
         generated = await _generate_json_file_plan(body.prompt, steps)
         if generated:
-            plan = _make_generated_plan(body.prompt, generated)
+            plan = _with_advisory(_make_generated_plan(body.prompt, generated), body.prompt)
             notes = list(plan.notes)
 
     created_files = _write_suggested_files(plan, body.overwrite, steps)
@@ -224,6 +224,134 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _generated_task_plan(prompt)
     return _general_plan(prompt)
 
+
+
+def _with_advisory(plan: TaskPlanResponse, prompt: str) -> TaskPlanResponse:
+    """Fill Claude-like guidance fields for every autonomous build plan."""
+    lower = prompt.lower()
+    subject = _advisory_subject(prompt)
+    default_requirements = _default_requirements(lower, subject)
+    if not plan.requirements_analysis:
+        plan.requirements_analysis = default_requirements
+    elif any(word in lower for word in ["crm", "management", "student", "library", "inventory", "dashboard", "portal"]):
+        joined_requirements = " ".join(plan.requirements_analysis).lower()
+        if "dashboard" not in joined_requirements and "record" not in joined_requirements:
+            plan.requirements_analysis.extend(default_requirements[:3])
+    if not plan.clarification_questions:
+        plan.clarification_questions = _default_clarifications(lower)
+    if not plan.stack:
+        plan.stack = _default_stack(plan)
+    if not plan.file_plan:
+        plan.file_plan = _default_file_plan(plan)
+    default_workflow = _default_workflow_summary(plan, subject)
+    if not plan.workflow_summary:
+        plan.workflow_summary = default_workflow
+    elif "claude-style build" not in plan.workflow_summary.lower():
+        plan.workflow_summary = f"{plan.workflow_summary}\n{default_workflow}"
+    if not any("advisory" in note.lower() or "first version" in note.lower() for note in plan.notes):
+        plan.notes.append(
+            "Advisory-first behavior: SHAMSU explains what is needed, creates a working first version, verifies it, then opens preview when possible."
+        )
+    return plan
+
+
+def _advisory_subject(prompt: str) -> str:
+    words = re.findall(r"[A-Za-z0-9]+", prompt.lower())
+    ignored = {"make", "build", "create", "generate", "write", "a", "an", "the", "for", "me", "one", "single", "html", "file", "with"}
+    useful = [word for word in words if word not in ignored][:5]
+    return " ".join(useful) if useful else "requested project"
+
+
+def _default_requirements(lower: str, subject: str) -> list[str]:
+    if "game" in lower:
+        return [
+            f"Define the core gameplay for {subject}.",
+            "Create visible game state such as score, lives, player position, or win/loss state.",
+            "Add keyboard or mouse controls that are easy to test in the browser.",
+            "Keep the first version small enough to preview and repair quickly.",
+        ]
+    if any(word in lower for word in ["crm", "management", "student", "library", "inventory", "dashboard", "portal"]):
+        return [
+            f"Model the main records needed for {subject}.",
+            "Provide dashboard summary cards for quick status understanding.",
+            "Add a table/list view with search or filtering.",
+            "Add a form for creating records and client-side validation for required fields.",
+            "Use local persistence for the first demo, then note how to upgrade to backend/database storage.",
+        ]
+    if any(word in lower for word in ["website", "site", "web page", "landing"]):
+        return [
+            f"Identify the purpose and audience for {subject}.",
+            "Create the primary page structure, navigation, content sections, and call to action.",
+            "Use clean responsive styling and lightweight browser JavaScript only when it helps the experience.",
+            "Verify the generated page opens in the local preview server.",
+        ]
+    return [
+        f"Break the request into a small working first version for {subject}.",
+        "Create the minimum files needed to demonstrate the main behavior.",
+        "Run lightweight verification and repair errors before showing the result.",
+        "Explain next steps for expanding the prototype.",
+    ]
+
+
+def _default_clarifications(lower: str) -> list[str]:
+    questions: list[str] = []
+    if any(word in lower for word in ["system", "management", "crm", "portal", "dashboard"]):
+        questions.append("Should this stay as a quick local prototype, or later be upgraded with backend/database/auth?")
+        questions.append("What exact fields should each record store for the final version?")
+    if "game" in lower:
+        questions.append("Should the game be keyboard-only, mouse/touch-friendly, or both?")
+    if not questions:
+        questions.append("After the first preview, what feature should be improved next?")
+    return questions
+
+
+def _default_stack(plan: TaskPlanResponse) -> list[str]:
+    suffixes = {Path(item.get("path", "")).suffix.lower() for item in plan.suggested_files}
+    if suffixes <= {".html"} and suffixes:
+        return ["HTML", "CSS", "JavaScript", "Browser localStorage when persistence is needed", "Local preview server"]
+    stack = []
+    if any(suffix in suffixes for suffix in [".html", ".css", ".js"]):
+        stack.extend(["HTML", "CSS", "JavaScript"])
+    if ".py" in suffixes:
+        stack.append("Python")
+    if any(suffix in suffixes for suffix in [".json", ".md"]):
+        stack.append("Project metadata/documentation")
+    stack.append("SHAMSU autonomous verify and repair loop")
+    return stack
+
+
+def _default_file_plan(plan: TaskPlanResponse) -> list[str]:
+    if plan.suggested_files:
+        return [f"Create {item.get('path')}: {_file_plan_description(str(item.get('path') or ''), str(item.get('content') or ''))}" for item in plan.suggested_files]
+    return ["No files will be written yet; use chat/tool mode to inspect the workspace and refine the plan."]
+
+
+def _file_plan_description(path: str, content: str) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".html":
+        return "main runnable browser page with structure, styling, and interaction"
+    if suffix == ".css":
+        return "visual styling and responsive layout"
+    if suffix == ".js":
+        return "browser behavior and state management"
+    if suffix == ".py":
+        return "Python logic or backend/script entry point"
+    if suffix == ".md":
+        return "workflow notes, roadmap, or usage documentation"
+    if suffix == ".json":
+        return "structured configuration or seed data"
+    return f"generated project file ({len(content)} characters)"
+
+
+def _default_workflow_summary(plan: TaskPlanResponse, subject: str) -> str:
+    file_names = [str(item.get("path")) for item in plan.suggested_files if item.get("path")]
+    target = ", ".join(file_names) if file_names else "the planned files"
+    return (
+        f"SHAMSU will treat '{subject}' like a Claude-style build: first analyze what is needed, "
+        f"choose a small working first version, create {target}, run verification, repair if feedback appears, "
+        "then open a local preview for browser output. After the preview, ask for improvements such as more fields, "
+        "database persistence, authentication, or design polish."
+    )
 
 def _looks_like_build_request(prompt: str) -> bool:
     text = prompt.lower()
