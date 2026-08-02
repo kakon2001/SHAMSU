@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 import {
@@ -14,7 +14,10 @@ import {
   getGitLog,
   getGitSearch,
   getGitStatus,
+  getReportHistory,
+  getReportSchema,
   searchVectorContext,
+  runReportQuery,
   searchWeb,
   getModels,
   listSessions,
@@ -30,7 +33,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -62,6 +65,13 @@ function App() {
   const [vectorMatches, setVectorMatches] = useState<VectorMatch[]>([]);
   const [vectorMessage, setVectorMessage] = useState("");
   const [vectorBusy, setVectorBusy] = useState(false);
+  const [reportSchema, setReportSchema] = useState<ReportSchema | null>(null);
+  const [reportSql, setReportSql] = useState("SELECT title, updated_at, owner_id FROM sessions ORDER BY updated_at DESC");
+  const [reportTitle, setReportTitle] = useState("Recent sessions");
+  const [reportResult, setReportResult] = useState<ReportQueryResult | null>(null);
+  const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
+  const [reportMessage, setReportMessage] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
@@ -98,6 +108,8 @@ function App() {
     getConnectors().then(setConnectorMarketplace).catch((err: Error) => setNotice(err.message));
     getGitStatus().then(setGitStatus).catch((err: Error) => setNotice(err.message));
     getGitLog().then((result) => setGitCommits(result.commits)).catch((err: Error) => setNotice(err.message));
+    getReportSchema().then(setReportSchema).catch((err: Error) => setNotice(err.message));
+    getReportHistory().then((result) => setReportHistory(result.reports)).catch((err: Error) => setNotice(err.message));
   }, []);
 
   const refreshModels = useCallback(() => {
@@ -169,6 +181,28 @@ function App() {
       .finally(() => setVectorBusy(false));
   }, [vectorQuery]);
 
+
+  const runSqlReport = useCallback(() => {
+    const sql = reportSql.trim();
+    if (!sql) {
+      setReportMessage("Enter a SELECT query first.");
+      return;
+    }
+    setReportBusy(true);
+    setReportMessage("Running read-only SQL report...");
+    runReportQuery(sql, reportTitle.trim(), 100, true)
+      .then((result) => {
+        setReportResult(result);
+        setReportMessage(`Returned ${result.row_count} row(s) in ${result.elapsed_ms} ms.`);
+        return getReportHistory();
+      })
+      .then((history) => setReportHistory(history.reports))
+      .catch((err: Error) => {
+        setReportResult(null);
+        setReportMessage(err.message);
+      })
+      .finally(() => setReportBusy(false));
+  }, [reportSql, reportTitle]);
   const changeModel = useCallback((modelId: string) => {
     setCurrentModel(modelId)
       .then((state) => {
@@ -571,8 +605,61 @@ function App() {
           </div>
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
+              <strong>SQL Reporting</strong>
+              <span>{reportSchema ? `${reportSchema.tables.length} tables` : "not loaded"}</span>
+            </div>
+            <div className="reporting-layout">
+              <div className="reporting-schema">
+                <h3>Reporting Database</h3>
+                <p>{reportSchema?.database ?? "History database not loaded yet."}</p>
+                <div className="dashboard-list reporting-table-list">
+                  {(reportSchema?.tables ?? []).map((table) => (
+                    <button key={table.name} className="report-history-item" onClick={() => setReportSql(`SELECT * FROM ${table.name} ORDER BY rowid DESC`)}>
+                      <strong>{table.name}</strong>
+                      <span>{table.row_count} rows</span>
+                    </button>
+                  ))}
+                </div>
+                <h3>Saved Reports</h3>
+                <div className="dashboard-list reporting-table-list">
+                  {reportHistory.slice(0, 8).map((item) => (
+                    <button key={item.id} className="report-history-item" onClick={() => { setReportTitle(item.title); setReportSql(item.sql); }}>
+                      <strong>{item.title}</strong>
+                      <span>{item.row_count} rows</span>
+                    </button>
+                  ))}
+                  {reportHistory.length === 0 && <div>No saved reports yet.</div>}
+                </div>
+              </div>
+              <div>
+                <h3>Run Read-Only SQL</h3>
+                <input className="report-title-input" value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} placeholder="Report title" />
+                <textarea className="report-sql-input" value={reportSql} onChange={(e) => setReportSql(e.target.value)} spellCheck={false} />
+                <div className="vector-actions">
+                  <button className="btn" onClick={runSqlReport} disabled={reportBusy}>{reportBusy ? "Running..." : "Run Report"}</button>
+                  <span>{reportMessage || "Only SELECT/WITH queries are allowed."}</span>
+                </div>
+                {reportResult && (
+                  <div className="report-table-wrap">
+                    <table className="report-table">
+                      <thead>
+                        <tr>{reportResult.columns.map((column) => <th key={column}>{column}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {reportResult.rows.map((row, index) => (
+                          <tr key={index}>{reportResult.columns.map((column) => <td key={column}>{String(row[column] ?? "")}</td>)}</tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
               <strong>Git Dashboard</strong>
-              <span>{gitStatus ? `${gitStatus.branch} · ${gitStatus.clean ? "clean" : `${gitStatus.files.length} changed`}` : "not loaded"}</span>
+              <span>{gitStatus ? `${gitStatus.branch} - ${gitStatus.clean ? "clean" : `${gitStatus.files.length} changed`}` : "not loaded"}</span>
             </div>
             <div className="dashboard-columns">
               <div>
@@ -600,7 +687,7 @@ function App() {
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
               <strong>Tool Marketplace</strong>
-              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled · ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
+              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled � ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
             </div>
             <div className="connector-grid">
               {(connectorMarketplace?.connectors ?? []).map((connector) => (

@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats } from "../types";
+import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats, ReportSchema, ReportQueryResult, ReportHistoryItem } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -187,6 +187,21 @@ export function searchVectorContext(query: string, limit = 8): Promise<VectorSea
 
 
 
+
+// ------------------------------------------------------------------ reports
+
+export function getReportSchema(): Promise<ReportSchema> {
+  return fetch(`${API_BASE}/api/reports/schema`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<ReportSchema>(res));
+}
+
+export function runReportQuery(sql: string, title = "", limit = 100, save = true): Promise<ReportQueryResult> {
+  return post("/api/reports/query", { sql, title, limit, save });
+}
+
+export function getReportHistory(limit = 10): Promise<{ reports: ReportHistoryItem[] }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return fetch(`${API_BASE}/api/reports/history?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<{ reports: ReportHistoryItem[] }>(res));
+}
 // --------------------------------------------------------------- connectors
 
 export function getConnectors(): Promise<ConnectorMarketplace> {

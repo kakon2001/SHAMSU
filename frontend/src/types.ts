@@ -1,4 +1,4 @@
-﻿export interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   name: string;
@@ -238,6 +238,47 @@ export interface VectorRebuildResponse extends VectorStats {
   indexed_chunks: number;
 }
 
+
+export interface ReportColumn {
+  name: string;
+  type: string;
+  not_null: boolean;
+  primary_key: boolean;
+}
+
+export interface ReportTableSchema {
+  name: string;
+  row_count: number;
+  columns: ReportColumn[];
+}
+
+export interface ReportSchema {
+  database: string;
+  tables: ReportTableSchema[];
+}
+
+export interface ReportQueryResult {
+  ok: boolean;
+  title: string;
+  sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  limit: number;
+  elapsed_ms: number;
+  saved: boolean;
+  report_id?: string;
+}
+
+export interface ReportHistoryItem {
+  id: string;
+  title: string;
+  sql: string;
+  row_count: number;
+  columns: string[];
+  preview: Record<string, unknown>[];
+  created_at: number;
+}
 export interface PreviewState {
   running: boolean;
   managed: boolean;
