@@ -799,6 +799,53 @@ def test_implicit_code_fence_path_extraction() -> None:
     assert _extract_candidate_file_path("", "create a new file called game.py") == "game.py"
 
 
+
+def test_upload_returns_metadata_and_writes_context_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from io import BytesIO
+    from starlette.datastructures import UploadFile
+    from app.routes import uploads
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(uploads.settings, "agent_workdir", str(workspace))
+    upload = UploadFile(filename="Faculty Notes.txt", file=BytesIO(b"This document explains grading rubric and demo requirements."))
+
+    result = asyncio.run(uploads.upload_context_file(upload))
+
+    assert result["name"] == "Faculty Notes.txt"
+    assert result["kind"] == "text"
+    assert result["extension"] == "txt"
+    assert "grading rubric" in result["summary"]
+    stored = workspace / str(result["path"])
+    assert stored.exists()
+    assert "Uploaded source: Faculty Notes.txt" in stored.read_text(encoding="utf-8")
+
+
+def test_attached_upload_context_is_prioritized_over_workspace_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.loop import AgentSession
+    from app.agent import loop
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    upload_dir = workspace / "uploads"
+    upload_dir.mkdir()
+    uploaded = upload_dir / "20260802-120000-abcd-Faculty-Notes.txt"
+    uploaded.write_text("Uploaded source: Faculty Notes.txt\n\nRubric says demo must explain upload handling.", encoding="utf-8")
+    (workspace / "main.py").write_text("print('workspace file should not replace upload')\n", encoding="utf-8")
+    monkeypatch.setattr(loop.settings, "agent_workdir", str(workspace))
+
+    session = AgentSession(title="upload context test")
+    packet = session._with_file_context(
+        "what does this uploaded file say?",
+        ["uploads/20260802-120000-abcd-Faculty-Notes.txt"],
+        {"uploads/20260802-120000-abcd-Faculty-Notes.txt": "Faculty Notes.txt"},
+    )
+
+    assert "Uploaded attachment: Faculty Notes.txt" in packet
+    assert "Rubric says demo must explain upload handling" in packet
+    assert "Compact project architecture map" not in packet
+
 def test_implicit_code_fence_becomes_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
     from app.agent.loop import AgentSession

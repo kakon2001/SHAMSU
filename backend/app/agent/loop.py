@@ -1,4 +1,4 @@
-﻿"""HTTP-driven agent sessions.
+"""HTTP-driven agent sessions.
 
 Each AgentSession (one per chat session, managed by session_manager) runs
 turns as background asyncio tasks and records everything that happens as an
@@ -7,7 +7,7 @@ until the agent either finishes or pauses on a mutating tool (write_file /
 run_shell) that needs user approval; the response carries all events produced
 since the last request. Approving or rejecting resumes the loop with the real
 result (or the rejection), so the agent can edit a file, run the tests, and
-react to failures within a single turn â€” no WebSocket required.
+react to failures within a single turn — no WebSocket required.
 
 Sessions are persisted to MySQL (see app.db) at every turn end, so the full
 transcript and conversation survive a backend restart.
@@ -34,7 +34,7 @@ activity_log = logging.getLogger("agent.activity")
 
 
 def _utcnow() -> datetime:
-    # Naive UTC â€” MySQL DATETIME has no timezone.
+    # Naive UTC — MySQL DATETIME has no timezone.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -158,7 +158,7 @@ class AgentSession:
         self.busy = False
 
     def info(self) -> dict[str, Any]:
-        """Metadata for session lists â€” no transcript payload."""
+        """Metadata for session lists — no transcript payload."""
         return {
             "id": self.id,
             "title": self.title,
@@ -215,17 +215,22 @@ class AgentSession:
 
     # ------------------------------------------------------------------ API
 
-    def start_turn(self, user_message: str, context_files: Optional[list[str]] = None) -> None:
+    def start_turn(
+        self,
+        user_message: str,
+        context_files: Optional[list[str]] = None,
+        context_file_labels: Optional[dict[str, str]] = None,
+    ) -> None:
         if self.busy:
             raise RuntimeError("Agent is busy with the current turn")
         if self.title == DEFAULT_TITLE:
             # Name the session after its first request so the session list is readable.
             title = " ".join(user_message.split())
-            self.title = title[:57] + "â€¦" if len(title) > 58 else title or DEFAULT_TITLE
+            self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
         self._tools_enabled = _should_enable_tools(user_message, context_files or [])
-        self._turn_task = asyncio.create_task(self._run_turn(user_message, context_files or []))
+        self._turn_task = asyncio.create_task(self._run_turn(user_message, context_files or [], context_file_labels or {}))
 
     def resolve_approval(self, approval_id: str, approved: bool) -> None:
         future = self._pending_approvals.pop(approval_id, None)
@@ -251,12 +256,16 @@ class AgentSession:
 
     # ----------------------------------------------------------------- turn
 
-    async def _run_turn(self, user_message: str, context_files: list[str]) -> None:
+    async def _run_turn(self, user_message: str, context_files: list[str], context_file_labels: dict[str, str]) -> None:
         self._last_user_message = user_message
         self.conversation.append(
-            {"role": "user", "content": "/no_think\n" + self._with_file_context(user_message, context_files)}
+            {
+                "role": "user",
+                "content": "/no_think\n"
+                + self._with_file_context(user_message, context_files, context_file_labels),
+            }
         )
-        self._emit({"type": "user_message", "content": user_message, "context_files": context_files})
+        self._emit({"type": "user_message", "content": user_message, "context_files": context_files, "context_file_labels": context_file_labels})
         try:
             await self._run_loop()
         except TurnStopped:
@@ -275,28 +284,32 @@ class AgentSession:
             # so the stored transcript never contains a dangling approval card.
             await self.persist()
 
-    def _with_file_context(self, user_message: str, context_files: list[str]) -> str:
+    def _with_file_context(self, user_message: str, context_files: list[str], context_file_labels: dict[str, str] | None = None) -> str:
         """Build a compact memory packet for the local model.
 
         Attached files are still highest priority. Around them, the agent gets
         long-session memory, relevant summaries, and exact matching chunks so it
         can answer across more project/history context than the raw model window.
         """
+        attached_file_question = bool(context_files) and _asks_about_attached_file(user_message)
         auto_context = (
             context_index.automatic_context(user_message)
-            if not context_files or _wants_workspace_context(user_message)
+            if not context_files or (_wants_workspace_context(user_message) and not attached_file_question)
             else ""
         )
-        summary_context = context_index.automatic_summary_context(user_message)
-        project_map_context = context_index.project_map_context(user_message)
+        summary_context = "" if attached_file_question else context_index.automatic_summary_context(user_message)
+        project_map_context = "" if attached_file_question else context_index.project_map_context(user_message)
         conversation_memory = context_index.conversation_memory(self.events, user_message)
+        labels = context_file_labels or {}
         blocks = []
         for path in context_files[:5]:
+            label = labels.get(path) or _attachment_label(path)
             content = tools.read_file(path)
             if len(content) > settings.max_tool_output_chars:
                 content = content[: settings.max_tool_output_chars] + "\n... [truncated]"
             self._last_file_path = path
-            blocks.append(f"--- {path} ---\n{content}")
+            source_kind = "Uploaded attachment" if path.startswith("uploads/") else "Workspace attachment"
+            blocks.append(f"--- {source_kind}: {label} ({path}) ---\n{content}")
 
         parts = []
         if conversation_memory:
@@ -307,9 +320,10 @@ class AgentSession:
             )
         if blocks:
             parts.append(
-                "The user attached the following local file(s) as context. If the user says "
-                "'this file', 'the uploaded file', or asks what the file says, answer from these "
-                "attached file contents and do not substitute another workspace file:\n\n"
+                "The user attached the following local file(s) as context. These attachments are "
+                "the highest-priority source. If the user says 'this file', 'the uploaded file', "
+                "'the PDF', 'the document', or asks what the file says, answer from these attached "
+                "contents first and do not substitute another workspace file unless asked:\n\n"
                 + "\n\n".join(blocks)
             )
         if project_map_context:
@@ -371,7 +385,7 @@ class AgentSession:
         self._emit(
             {
                 "type": "assistant_message",
-                "content": "I hit the tool-call limit for this turn without finishing â€” "
+                "content": "I hit the tool-call limit for this turn without finishing — "
                 "ask again or break the request into smaller steps.",
             }
         )
@@ -712,3 +726,31 @@ def _wants_workspace_context(user_message: str) -> bool:
 
 
 
+
+
+def _asks_about_attached_file(user_message: str) -> bool:
+    text = user_message.lower()
+    phrases = {
+        "this file",
+        "that file",
+        "uploaded file",
+        "attached file",
+        "uploaded pdf",
+        "attached pdf",
+        "the pdf",
+        "the document",
+        "what is this file",
+        "what does this file",
+        "summarize this",
+        "summarise this",
+    }
+    return any(phrase in text for phrase in phrases)
+
+
+def _attachment_label(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    if path.startswith("uploads/"):
+        parts = name.split("-", 3)
+        if len(parts) == 4:
+            return parts[3].removesuffix(".txt")
+    return name

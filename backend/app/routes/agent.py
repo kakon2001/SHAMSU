@@ -22,6 +22,7 @@ class RenameSessionRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     context_files: list[str] = []
+    context_file_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class ApprovalRequest(BaseModel):
@@ -219,7 +220,7 @@ async def chat(session_id: str, body: ChatRequest, user: dict[str, Any] = Depend
         raise HTTPException(status_code=400, detail="Message must not be empty")
     if session.busy:
         raise HTTPException(status_code=409, detail="Agent is busy with the current turn")
-    session.start_turn(message, context_files=body.context_files)
+    session.start_turn(message, context_files=body.context_files, context_file_labels=body.context_file_labels)
     return await _continue(session)
 
 

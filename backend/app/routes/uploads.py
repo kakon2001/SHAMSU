@@ -60,6 +60,9 @@ async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]
         "path": context_path,
         "chars": len(text),
         "kind": "pdf" if suffix == ".pdf" else "text",
+        "extension": suffix.lstrip(".") or "text",
+        "summary": _upload_summary(raw_name, text),
+        "preview": _preview_text(text),
     }
 
 
@@ -108,3 +111,17 @@ def _extract_pdf_text(data: bytes) -> str:
         if page_text.strip():
             pages.append(f"[Page {index}]\n{page_text.strip()}")
     return "\n\n".join(pages)
+
+
+def _upload_summary(name: str, text: str, max_chars: int = 180) -> str:
+    first = " ".join(text.strip().split())
+    if len(first) > max_chars:
+        first = first[:max_chars].rstrip() + "..."
+    return f"{name}: {first}"
+
+
+def _preview_text(text: str, max_chars: int = 500) -> str:
+    compact = " ".join(text.strip().split())
+    if len(compact) > max_chars:
+        return compact[:max_chars].rstrip() + "..."
+    return compact
