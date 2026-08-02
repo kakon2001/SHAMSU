@@ -74,19 +74,51 @@ def _iter_balanced_json_objects(text: str):
 
 
 def _extract_fallback_tool_call(content: str) -> Optional[dict[str, Any]]:
-    if not content or "{" not in content:
+    if not content:
         return None
-    for candidate in _iter_balanced_json_objects(content):
+    if "{" in content:
+        for candidate in _iter_balanced_json_objects(content):
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            call = _normalise_tool_payload(parsed)
+            if call is not None:
+                return call
+    return _extract_function_style_tool_call(content)
+
+
+def _normalise_tool_payload(parsed: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(parsed, dict):
+        return None
+    if "function" in parsed and isinstance(parsed["function"], dict):
+        parsed = parsed["function"]
+    name = parsed.get("name") or parsed.get("tool") or parsed.get("tool_name")
+    args = parsed.get("arguments") or parsed.get("args") or {}
+    if isinstance(args, str):
         try:
-            parsed = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            args = {"command": args} if name == "run_shell" else {}
+    if name in TOOL_NAMES and isinstance(args, dict):
+        return {"name": name, "arguments": args}
+    return None
+
+
+def _extract_function_style_tool_call(content: str) -> Optional[dict[str, Any]]:
+    patterns = [
+        ("run_shell", r"(?is)run_shell\s*\(\s*(?:command\s*=\s*)?[`'\"]?(.+?)[`'\"]?\s*\)"),
+        ("read_file", r"(?is)read_file\s*\(\s*(?:path\s*=\s*)?[`'\"]?([^`'\")\r\n]+)[`'\"]?\s*\)"),
+        ("list_directory", r"(?is)list_directory\s*\(\s*(?:path\s*=\s*)?[`'\"]?([^`'\")\r\n]*)[`'\"]?\s*\)"),
+    ]
+    for name, pattern in patterns:
+        match = re.search(pattern, content)
+        if not match:
             continue
-        if (
-            isinstance(parsed, dict)
-            and parsed.get("name") in TOOL_NAMES
-            and isinstance(parsed.get("arguments", {}), dict)
-        ):
-            return {"name": parsed["name"], "arguments": parsed.get("arguments") or {}}
+        value = match.group(1).strip().strip("`'\"")
+        if name == "run_shell":
+            return {"name": name, "arguments": {"command": value}}
+        return {"name": name, "arguments": {"path": value or "."}}
     return None
 
 
@@ -155,6 +187,8 @@ class AgentSession:
         self._last_user_message = ""
         self._tools_enabled = True
         self._streamed_message_id: Optional[str] = None
+        self._verification_pending = False
+        self._repair_pending = False
         self.busy = False
 
     def info(self) -> dict[str, Any]:
@@ -355,6 +389,11 @@ class AgentSession:
                     # The leaked text was a malformed tool call, not real prose to replay.
                     tool_calls = [fallback]
                     content = ""
+                elif self._should_continue_for_verification(content):
+                    self.conversation.append({"role": "assistant", "content": content})
+                    self.conversation.append({"role": "user", "content": _verification_supervisor_message(self._repair_pending)})
+                    self._emit({"type": "tool_loop_status", "status": "verification_requested", "repair": self._repair_pending})
+                    continue
                 else:
                     handled_as_edit = await self._maybe_offer_implicit_edit(content)
                     if handled_as_edit:
@@ -456,12 +495,35 @@ class AgentSession:
             else:
                 result = self._execute_read_only(name, args)
             ok = not result.startswith("Error")
+            self._update_tool_loop_state(name, result, ok)
         except TurnStopped:
             raise
         except Exception as exc:  # tool errors go back to the model, not up the stack
             result, ok = f"Error: {exc}", False
         self._emit({"type": "tool_result", "id": call_id, "name": name, "ok": ok, "preview": result[:500]})
         return result
+
+    def _update_tool_loop_state(self, name: str, result: str, ok: bool) -> None:
+        if name in {"write_file", "replace_in_file"} and ok:
+            self._verification_pending = True
+            self._repair_pending = False
+            return
+        if name == "run_shell" and self._verification_pending:
+            if ok and "[exit code: 0]" in result:
+                self._verification_pending = False
+                self._repair_pending = False
+            else:
+                self._repair_pending = True
+
+    def _should_continue_for_verification(self, content: str) -> bool:
+        if not self._verification_pending:
+            return False
+        lowered = (content or "").lower()
+        if any(term in lowered for term in {"verified", "tests passed", "exit code: 0", "verification passed"}):
+            self._verification_pending = False
+            self._repair_pending = False
+            return False
+        return True
 
     def _execute_read_only(self, name: str, args: dict[str, Any]) -> str:
         if name == "list_directory":
@@ -630,6 +692,20 @@ class AgentSession:
 
 
 
+
+
+def _verification_supervisor_message(repair_pending: bool) -> str:
+    if repair_pending:
+        return (
+            "Tool-use supervisor: the last verification command failed. Use read_file_range/search_files "
+            "to inspect the failing area, patch the file with replace_in_file or write_file, then run "
+            "a safe verification command again. Do not finish until verification passes or you explain the blocker."
+        )
+    return (
+        "Tool-use supervisor: you changed workspace files but have not verified them yet. Call run_shell "
+        "with an appropriate safe verification command such as a test, compiler, linter, or simple script run. "
+        "If no verification command exists, explain that clearly after checking the project."
+    )
 def _web_context_for_policy(policy: query_policy.QueryPolicy, user_message: str) -> str:
     if not policy.use_web_search:
         return ""
