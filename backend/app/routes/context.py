@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from .. import context_index, vector_index
+from .. import context_index, vector_index, long_context
 
 router = APIRouter(prefix="/api/context", tags=["context"])
 
@@ -72,3 +72,8 @@ async def vector_rebuild(request: VectorRebuildRequest) -> dict[str, object]:
 async def vector_search(query: str = Query(...), limit: int = Query(8, ge=1, le=20)) -> dict[str, object]:
     return {"query": query, "matches": vector_index.semantic_search(query, limit=limit)}
 
+
+
+@router.get("/bundle")
+async def context_bundle(query: str = Query(...), budget: int = Query(7000, ge=2500, le=16000)) -> dict[str, object]:
+    return long_context.build_bundle(query, budget=budget, fast=True)
