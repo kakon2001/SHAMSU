@@ -327,14 +327,14 @@ function App() {
     handleFilesChanged,
     refreshSessions,
   );
-  const sendOrBuild = useCallback((text: string, contextFiles: string[]) => {
+  const sendOrBuild = useCallback((text: string, contextFiles: string[], contextFileLabels: Record<string, string> = {}) => {
     const lower = text.toLowerCase();
     const shouldAutoBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower);
     if (shouldAutoBuild) {
       runAutoBuild(text);
       return;
     }
-    sendChat(text, contextFiles);
+    sendChat(text, contextFiles, contextFileLabels);
   }, [runAutoBuild, sendChat]);
 
   useEffect(() => {

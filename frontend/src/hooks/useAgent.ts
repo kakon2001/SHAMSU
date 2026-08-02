@@ -16,7 +16,7 @@ interface UseAgent {
   items: ChatItem[];
   connected: boolean;
   busy: boolean;
-  sendChat: (content: string, contextFiles?: string[]) => void;
+  sendChat: (content: string, contextFiles?: string[], contextFileLabels?: Record<string, string>) => void;
   respondApproval: (id: string, approved: boolean) => void;
   stop: () => void;
   reset: () => void;
@@ -35,7 +35,7 @@ function eventsToItems(
         if (includeUser)
           items = [
             ...items,
-            { kind: "user", id: uid(), content: ev.content, contextFiles: ev.context_files },
+            { kind: "user", id: uid(), content: ev.content, contextFiles: ev.context_files, contextFileLabels: ev.context_file_labels },
           ];
         break;
       case "assistant_message":
@@ -221,11 +221,11 @@ export function useAgent(
   }, [sessionId, apply, pump, pendingOf, trackPending]);
 
   const sendChat = useCallback(
-    (content: string, contextFiles: string[] = []) => {
+    (content: string, contextFiles: string[] = [], contextFileLabels: Record<string, string> = {}) => {
       const sid = sessionRef.current;
       if (!sid) return;
-      setItems((prev) => [...prev, { kind: "user", id: uid(), content, contextFiles }]);
-      void pump(sid, postChat(sid, content, contextFiles));
+      setItems((prev) => [...prev, { kind: "user", id: uid(), content, contextFiles, contextFileLabels }]);
+      void pump(sid, postChat(sid, content, contextFiles, contextFileLabels));
     },
     [pump],
   );

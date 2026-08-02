@@ -10,7 +10,7 @@ interface Props {
   connected: boolean;
   files: string[];
   activePath: string | null;
-  onSend: (text: string, contextFiles: string[]) => void;
+  onSend: (text: string, contextFiles: string[], contextFileLabels: Record<string, string>) => void;
   onStop: () => void;
   onRespondApproval: (id: string, approved: boolean) => void;
   onUploaded?: () => void;
@@ -58,7 +58,7 @@ export function ChatPanel({
     e.preventDefault();
     const text = input.trim();
     if (!text || busy || !connected) return;
-    onSend(text, attached);
+    onSend(text, attached, attachmentLabels);
     setInput("");
     setAttached([]);
     setAttachmentLabels({});
@@ -80,7 +80,7 @@ export function ChatPanel({
       attach(uploaded.path);
       setUploadStatus({
         kind: "success",
-        text: `Attached ${uploaded.name} (${uploaded.chars.toLocaleString()} chars extracted).`,
+        text: `${uploaded.summary ?? `Attached ${uploaded.name}`} (${uploaded.chars.toLocaleString()} chars extracted).`,
       });
       onUploaded?.();
     } catch (err) {
@@ -138,6 +138,7 @@ export function ChatPanel({
                   role="user"
                   content={item.content}
                   files={item.contextFiles}
+                  fileLabels={item.contextFileLabels}
                 />
               );
             case "assistant":

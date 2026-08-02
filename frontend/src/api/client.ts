@@ -88,8 +88,13 @@ export function postChat(
   sessionId: string,
   message: string,
   contextFiles: string[] = [],
+  contextFileLabels: Record<string, string> = {},
 ): Promise<AgentResponse> {
-  return post(`/api/sessions/${sessionId}/chat`, { message, context_files: contextFiles });
+  return post(`/api/sessions/${sessionId}/chat`, {
+    message,
+    context_files: contextFiles,
+    context_file_labels: contextFileLabels,
+  });
 }
 
 export function postApproval(

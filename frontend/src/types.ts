@@ -25,11 +25,14 @@ export interface UploadedContextFile {
   path: string;
   chars: number;
   kind: "pdf" | "text";
+  extension?: string;
+  summary?: string;
+  preview?: string;
 }
 
 /** Events recorded by the backend agent session. */
 export type AgentEvent =
-  | { type: "user_message"; content: string; context_files?: string[]; timestamp?: string }
+  | { type: "user_message"; content: string; context_files?: string[]; context_file_labels?: Record<string, string>; timestamp?: string }
   | { type: "assistant_delta"; id: string; content: string; timestamp?: string }
   | { type: "assistant_message"; id?: string; content: string; timestamp?: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown>; timestamp?: string }
@@ -67,7 +70,7 @@ export interface SessionInfo {
 
 /** Items rendered in the chat transcript. */
 export type ChatItem =
-  | { kind: "user"; id: string; content: string; contextFiles?: string[] }
+  | { kind: "user"; id: string; content: string; contextFiles?: string[]; contextFileLabels?: Record<string, string> }
   | { kind: "assistant"; id: string; content: string }
   | {
       kind: "tool";
