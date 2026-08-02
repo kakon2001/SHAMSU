@@ -81,6 +81,9 @@ class VerificationRunResponse(BaseModel):
 
 class EditWorkflowResponse(BaseModel):
     goal: str
+    workflow_summary: str
+    claude_like_workflow: list[str]
+    debug_strategy: list[str]
     index_summary: str
     relevant_files: list[RelevantFile]
     range_windows: list[RangeWindow]
@@ -101,6 +104,9 @@ def plan_large_edit(body: EditWorkflowRequest) -> EditWorkflowResponse:
     verification = _verification_commands(relevant)
     return EditWorkflowResponse(
         goal=body.prompt.strip(),
+        workflow_summary=_edit_workflow_summary(body.prompt, relevant, windows),
+        claude_like_workflow=_claude_like_edit_workflow(relevant),
+        debug_strategy=_debug_strategy(body.prompt, relevant, query),
         index_summary=_index_summary(index),
         relevant_files=relevant,
         range_windows=windows,
@@ -152,6 +158,50 @@ def _load_project_index(path: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return {"root": path, "file_count": 0, "files": [], "error": "project_index returned a non-object payload"}
     return parsed
+
+
+def _edit_workflow_summary(prompt: str, files: list[RelevantFile], windows: list[RangeWindow]) -> str:
+    file_count = len(files)
+    range_count = len(windows)
+    large_count = sum(1 for file in files if file.large)
+    return (
+        f"Claude-like large-file workflow selected for: {prompt.strip()}. "
+        f"SHAMSU indexes the project, searches for relevant symbols/errors, reads {range_count} bounded range window(s) "
+        f"from {file_count} relevant file(s), flags {large_count} large/unindexed file(s), plans exact-block patches, "
+        "then verifies and uses failure output for the next repair loop."
+    )
+
+
+def _claude_like_edit_workflow(files: list[RelevantFile]) -> list[str]:
+    workflow = [
+        "Understand the user goal and extract likely symbols, file names, stack-trace terms, and error words.",
+        "Build a project index/map instead of reading the whole repository into the prompt.",
+        "Search files and semantic context to find likely bug locations.",
+        "Read only bounded line ranges around matches, especially for large or unindexed files.",
+        "Create a patch plan that targets the smallest exact text block.",
+        "Ask for approval before mutating files through replace_in_file or write_file.",
+        "Run focused verification commands such as py_compile, pytest, npm build, or compiler checks.",
+        "If verification fails, feed the failure summary back into the same search/range/patch loop.",
+    ]
+    if any(file.large for file in files):
+        workflow.insert(4, "For huge files, avoid full-file rewrites and use read_file_range windows only.")
+    return workflow
+
+
+def _debug_strategy(prompt: str, files: list[RelevantFile], query: str) -> list[str]:
+    strategy = [
+        f"Search query extracted from prompt: {query or 'not available'}.",
+        "Use project_index/project_map first to understand ownership, symbols, imports, and likely entry points.",
+    ]
+    if files:
+        strategy.append("Prioritize files because they matched prompt terms, symbol names, search hits, or file paths: " + ", ".join(file.path for file in files[:5]))
+    else:
+        strategy.append("No strong match was found; ask for an error message, file name, function name, or stack trace before editing.")
+    if any(file.large for file in files):
+        strategy.append("At least one selected file is large, so SHAMSU must use read_file_range and exact-block replacement only.")
+    strategy.append("Never patch from a guess: confirm old_text from the selected range before approval-based editing.")
+    strategy.append("After each patch, run the suggested verification command and repeat from the error output if needed.")
+    return strategy
 
 
 def _query_from_prompt(prompt: str) -> str:

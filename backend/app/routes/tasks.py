@@ -188,6 +188,10 @@ def _phase_status(steps: list[TaskRunStep]) -> str:
 def build_plan(prompt: str) -> TaskPlanResponse:
     prompt = prompt.strip()
     lower = prompt.lower()
+    if any(word in lower for word in ["large file", "100000", "100,000", "huge file"]):
+        return _large_file_plan(prompt)
+    if any(word in lower for word in ["bug", "fix", "error", "traceback", "failing"]):
+        return _bugfix_plan(prompt)
     if "brick" in lower and ("breaker" in lower or "game" in lower):
         return _brick_breaker_plan(prompt)
     if "snake" in lower and "game" in lower:
@@ -216,10 +220,6 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _full_stack_project_plan(prompt)
     if _looks_like_system_request(lower):
         return _starter_system_plan(prompt)
-    if any(word in lower for word in ["bug", "fix", "error", "traceback", "failing"]):
-        return _bugfix_plan(prompt)
-    if any(word in lower for word in ["large file", "100000", "100,000", "huge file"]):
-        return _large_file_plan(prompt)
     if _looks_like_build_request(prompt):
         return _generated_task_plan(prompt)
     return _general_plan(prompt)
@@ -2331,22 +2331,62 @@ def _generated_task_plan(prompt: str) -> TaskPlanResponse:
 def _bugfix_plan(prompt: str) -> TaskPlanResponse:
     return TaskPlanResponse(
         goal=prompt,
-        mode="bugfix",
-        steps=["Run project_index to map files and symbols.", "Use search_files for the error name or stack trace.", "Use read_file_range around failing lines.", "Patch with replace_in_file.", "Run verification."],
+        mode="claude-like-bugfix-workflow",
+        steps=[
+            "Analyze the bug report, stack trace, file name, function name, or failing behavior.",
+            "Run project_index and project_map to understand files, symbols, imports, and ownership.",
+            "Use search_files and semantic_search to locate likely bug regions.",
+            "Use read_file_range around matching lines instead of reading/replacing whole files.",
+            "Prepare the smallest exact-block patch with replace_in_file and wait for approval.",
+            "Run verification and use failure output for the next repair loop.",
+        ],
         suggested_files=[],
-        verify_commands=["python -m pytest -q", "npm test", "python <script>.py"],
-        notes=["Bugfix tasks require existing project context and still use the normal approval-gated tools."],
+        verify_commands=["python -m pytest -q", "npm test", "python -m py_compile <changed_file.py>", "npm run build"],
+        notes=["Bugfix mode follows a Claude-like index -> search -> range-read -> patch -> verify -> repair loop."],
+        requirements_analysis=[
+            "Identify the failing behavior and extract concrete search terms from the prompt or error output.",
+            "Map the project before editing so SHAMSU understands nearby files and dependencies.",
+            "Read only relevant line ranges and confirm exact old_text before patching.",
+            "Verify after every focused edit and repeat from error feedback if needed.",
+        ],
+        clarification_questions=[
+            "Can you provide the exact error message, failing command, stack trace, or expected vs actual behavior?",
+            "Which file or feature should be treated as the highest-priority suspect?",
+        ],
+        stack=["project_index", "project_map", "search_files", "semantic_search", "read_file_range", "replace_in_file", "verification commands"],
+        file_plan=["No new file is created automatically; SHAMSU first locates the bug and patches the smallest affected existing file block."],
+        workflow_summary="Claude-like bugfix workflow: understand failure -> index project -> search symbols/errors -> read bounded ranges -> patch exact block with approval -> verify -> repair from feedback.",
     )
 
 
 def _large_file_plan(prompt: str) -> TaskPlanResponse:
     return TaskPlanResponse(
         goal=prompt,
-        mode="large-file-handler",
-        steps=["Use project_index to find files.", "Use search_files to locate targets.", "Use read_file_range in bounded windows.", "Patch only exact ranges.", "Run focused verification."],
+        mode="claude-like-large-file-debugger",
+        steps=[
+            "Do not load the full huge file into the model.",
+            "Build project_index/project_map to identify file size, symbols, and likely target ranges.",
+            "Search for function names, stack-trace terms, errors, or semantic hints.",
+            "Read only bounded line ranges with read_file_range around matches.",
+            "Create a patch plan for the smallest exact block and ask for approval.",
+            "Run focused verification, then repeat using the failure output if needed.",
+        ],
         suggested_files=[],
-        verify_commands=["python -m pytest -q", "python -m py_compile <file>.py"],
-        notes=["Do not paste or load a 100000-line file into the model at once."],
+        verify_commands=["python -m pytest -q", "python -m py_compile <changed_file.py>", "npm run build", "gcc <changed_file.c> -o <output.exe>"],
+        notes=["Large-file mode is designed for 100000-line style files by using indexing, search, range reads, and exact patches."],
+        requirements_analysis=[
+            "Treat the prompt as a debugging workflow, not a full-file reading task.",
+            "Extract search terms from stack traces, function names, error text, or expected behavior.",
+            "Use bounded windows so SHAMSU can reason about the important lines without exceeding context.",
+            "Patch only confirmed exact text and verify the affected behavior.",
+        ],
+        clarification_questions=[
+            "What error message, function name, or line number should SHAMSU search for first?",
+            "Which verification command proves the bug is fixed?",
+        ],
+        stack=["project_index", "search_files", "semantic_search", "read_file_range", "replace_in_file", "pytest/build/compiler verification"],
+        file_plan=["No whole-file rewrite. SHAMSU will locate relevant ranges, propose an exact patch, and mutate only after approval."],
+        workflow_summary="Claude-like large-file workflow: index first, search targets, read ranges, patch exact blocks, verify, and repair from feedback without loading the whole huge file.",
     )
 
 

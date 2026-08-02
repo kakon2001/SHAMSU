@@ -257,11 +257,30 @@ def test_large_file_edit_workflow_plans_ranges_and_verification(backend_server: 
     assert "large_module.py" in paths
     assert any(item["path"] == "large_module.py" and item["large"] for item in result["relevant_files"])
     assert any(window["path"] == "large_module.py" and window["start_line"] < 1110 for window in result["range_windows"])
+    assert result["workflow_summary"].startswith("Claude-like large-file workflow")
+    assert any("project index" in step.lower() or "project_index" in step.lower() for step in result["claude_like_workflow"])
+    assert any("read_file_range" in step for step in result["debug_strategy"])
     assert any(item["path"] == "large_module.py" and item["tool"] == "replace_in_file" for item in result["patch_plan"])
     assert "python -m py_compile <changed_file.py>" in result["verification_commands"]
     assert "npm run build" in result["verification_commands"]
     assert any("bounded range reads" in item for item in result["impact_summary"])
 
+
+
+def test_bugfix_and_large_file_plans_are_claude_like() -> None:
+    from app.routes.tasks import build_plan
+
+    bugfix = build_plan("fix the traceback in calculator_app.html")
+    assert bugfix.mode == "claude-like-bugfix-workflow"
+    assert any("index" in step.lower() for step in bugfix.steps)
+    assert any("search" in step.lower() for step in bugfix.steps)
+    assert any("read_file_range" in item for item in bugfix.stack)
+    assert "patch exact block" in bugfix.workflow_summary.lower()
+
+    large = build_plan("fix a bug in a 100000 line huge file")
+    assert large.mode == "claude-like-bugfix-workflow" or large.mode == "claude-like-large-file-debugger"
+    assert large.requirements_analysis
+    assert any("bounded" in item.lower() or "range" in item.lower() for item in large.requirements_analysis)
 
 def test_large_file_edit_workflow_handles_no_match(backend_server: None) -> None:
     result = request("POST", "/api/workflows/edit-plan", {"prompt": "review unknown subsystem", "query": "definitely_missing_symbol"})
