@@ -646,6 +646,19 @@ def test_general_system_prompt_creates_dashboard_prototype(tmp_path: Path, monke
     assert "toggleRecord" in app_js
     assert "localStorage" in app_js
 
+
+def test_advisory_build_plan_explains_workflow_before_result() -> None:
+    from app.routes import tasks
+
+    plan = tasks._with_advisory(tasks.build_plan("make a student management website"), "make a student management website")
+
+    assert plan.requirements_analysis
+    assert any("dashboard" in item.lower() or "records" in item.lower() for item in plan.requirements_analysis)
+    assert plan.clarification_questions
+    assert plan.stack
+    assert plan.file_plan
+    assert "Claude-style build" in plan.workflow_summary
+
 def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
     from app.routes.tasks import build_plan
 

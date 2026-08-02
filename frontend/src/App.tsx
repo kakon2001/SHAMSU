@@ -294,16 +294,21 @@ function App() {
           ? `\n\nReliability loop:\n${reliability.phases.map((phase) => `- ${phase}`).join("\n")}\n- final: ${reliability.final_status}\n- repair attempts: ${reliability.repair_attempts}\n- next: ${reliability.next_action}`
           : "";
         const summary = [
-          result.ok ? "Build completed." : "Build needs follow-up.",
+          "SHAMSU advisory build plan",
+          `Request: ${result.goal}`,
           `Mode: ${result.mode}.`,
-          fileText,
-          result.preview_url ? `Preview: ${result.preview_url}` : "Preview: not available until verification passes.",
         ].join("\n")
           + section("Requirement analysis", result.requirements_analysis)
-          + section("Clarification questions", result.clarification_questions)
-          + section("Chosen stack", result.stack)
+          + section("What may need clarification later", result.clarification_questions)
+          + section("Recommended first-version setup", result.stack)
           + section("File plan", result.file_plan)
           + workflowText
+          + "\n\nBuild result:\n"
+          + [
+            result.ok ? "- Build completed and verified." : "- Build needs follow-up.",
+            `- ${fileText}`,
+            result.preview_url ? `- Preview: ${result.preview_url}` : "- Preview: not available until verification passes.",
+          ].join("\n")
           + stepText
           + reliabilityText
           + noteText;
