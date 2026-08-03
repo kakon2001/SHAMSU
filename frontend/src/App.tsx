@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 import {
@@ -14,6 +14,9 @@ import {
   getGitLog,
   getGitSearch,
   getGitStatus,
+  scanDependencies,
+  planDependencies,
+  installDependencies,
   getReportHistory,
   getReportSchema,
   searchVectorContext,
@@ -33,7 +36,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema, DependencyScan, DependencyPlan, DependencyInstallResult } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -72,6 +75,12 @@ function App() {
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
   const [reportMessage, setReportMessage] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
+  const [dependencyScan, setDependencyScan] = useState<DependencyScan | null>(null);
+  const [dependencyPrompt, setDependencyPrompt] = useState("make a CRM dashboard with charts and forms");
+  const [dependencyPlan, setDependencyPlan] = useState<DependencyPlan | null>(null);
+  const [dependencyPreview, setDependencyPreview] = useState<DependencyInstallResult | null>(null);
+  const [dependencyMessage, setDependencyMessage] = useState("");
+  const [dependencyBusy, setDependencyBusy] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
@@ -110,6 +119,7 @@ function App() {
     getGitLog().then((result) => setGitCommits(result.commits)).catch((err: Error) => setNotice(err.message));
     getReportSchema().then(setReportSchema).catch((err: Error) => setNotice(err.message));
     getReportHistory().then((result) => setReportHistory(result.reports)).catch((err: Error) => setNotice(err.message));
+    scanDependencies().then(setDependencyScan).catch((err: Error) => setNotice(err.message));
   }, []);
 
   const refreshModels = useCallback(() => {
@@ -203,6 +213,56 @@ function App() {
       })
       .finally(() => setReportBusy(false));
   }, [reportSql, reportTitle]);
+
+  const planDependencyInstall = useCallback(() => {
+    const prompt = dependencyPrompt.trim();
+    if (!prompt) {
+      setDependencyMessage("Enter a feature goal first.");
+      return;
+    }
+    setDependencyBusy(true);
+    setDependencyMessage("Planning external libraries...");
+    planDependencies(prompt)
+      .then((plan) => {
+        setDependencyPlan(plan);
+        setDependencyPreview(null);
+        setDependencyMessage(`Suggested ${plan.suggestions.length} package(s). Preview before installing.`);
+        setDependencyScan(plan.detected);
+      })
+      .catch((err: Error) => setDependencyMessage(err.message))
+      .finally(() => setDependencyBusy(false));
+  }, [dependencyPrompt]);
+
+  const previewDependencyInstall = useCallback((suggestion: DependencyPlan["suggestions"][number]) => {
+    if (!suggestion.project_path) {
+      setDependencyMessage("No compatible project manifest was found for this package manager.");
+      return;
+    }
+    setDependencyBusy(true);
+    setDependencyMessage("Preparing approval preview...");
+    installDependencies(suggestion.manager, [suggestion.package], suggestion.project_path, false, false)
+      .then((result) => {
+        setDependencyPreview(result);
+        setDependencyMessage(result.message || "Review the command, then approve install if needed.");
+      })
+      .catch((err: Error) => setDependencyMessage(err.message))
+      .finally(() => setDependencyBusy(false));
+  }, []);
+
+  const approveDependencyInstall = useCallback(() => {
+    if (!dependencyPreview) return;
+    setDependencyBusy(true);
+    setDependencyMessage("Installing approved package and updating dependency files...");
+    installDependencies(dependencyPreview.manager, dependencyPreview.packages, dependencyPreview.project_path, true, true)
+      .then((result) => {
+        setDependencyPreview(result);
+        setDependencyMessage(result.ok ? "Install verified successfully." : "Install finished with errors. Read the output and repair from there.");
+        return scanDependencies();
+      })
+      .then(setDependencyScan)
+      .catch((err: Error) => setDependencyMessage(err.message))
+      .finally(() => setDependencyBusy(false));
+  }, [dependencyPreview]);
   const changeModel = useCallback((modelId: string) => {
     setCurrentModel(modelId)
       .then((state) => {
@@ -605,6 +665,57 @@ function App() {
           </div>
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
+              <strong>External Libraries</strong>
+              <span>{dependencyScan?.summary ?? "scan not loaded"}</span>
+            </div>
+            <div className="dependency-layout">
+              <div>
+                <h3>Detected Projects</h3>
+                <div className="dashboard-list dependency-project-list">
+                  {(dependencyScan?.projects ?? []).map((project) => (
+                    <div key={project.path}>{project.path} - {project.managers.join(", ")}</div>
+                  ))}
+                  {dependencyScan && dependencyScan.projects.length === 0 && <div>No package manifests found.</div>}
+                </div>
+                <h3>Claude-Like Library Workflow</h3>
+                <div className="dependency-workflow">
+                  {(dependencyPlan?.workflow ?? [
+                    "Detect stack from dependency files.",
+                    "Suggest libraries from the prompt.",
+                    "Preview install command for approval.",
+                    "Install, update manifests, build/test, and repair errors.",
+                  ]).map((step) => <div key={step}>{step}</div>)}
+                </div>
+              </div>
+              <div>
+                <h3>Plan Packages</h3>
+                <textarea className="report-sql-input dependency-prompt" value={dependencyPrompt} onChange={(e) => setDependencyPrompt(e.target.value)} spellCheck={false} />
+                <div className="vector-actions">
+                  <button className="btn" onClick={planDependencyInstall} disabled={dependencyBusy}>{dependencyBusy ? "Working..." : "Plan Libraries"}</button>
+                  <span>{dependencyMessage || "SHAMSU will not install anything until you approve."}</span>
+                </div>
+                <div className="dependency-suggestions">
+                  {(dependencyPlan?.suggestions ?? []).map((suggestion) => (
+                    <button key={`${suggestion.manager}-${suggestion.package}`} className="dependency-suggestion" onClick={() => previewDependencyInstall(suggestion)}>
+                      <strong>{suggestion.package}</strong>
+                      <span>{suggestion.manager} - {suggestion.project_path || "no matching project"}</span>
+                      <p>{suggestion.reason}</p>
+                    </button>
+                  ))}
+                </div>
+                {dependencyPreview && (
+                  <div className="dependency-preview">
+                    <strong>{dependencyPreview.ran ? "Install Result" : "Approval Preview"}</strong>
+                    <code>{dependencyPreview.command}</code>
+                    {dependencyPreview.manifest_updates.length > 0 && <p>{dependencyPreview.manifest_updates.join("; ")}</p>}
+                    {dependencyPreview.output && <pre>{dependencyPreview.output}</pre>}
+                    {!dependencyPreview.ran && <button className="btn" onClick={approveDependencyInstall} disabled={dependencyBusy}>Approve Install + Verify</button>}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>          <div className="dashboard-git">
+            <div className="dashboard-panel__header">
               <strong>SQL Reporting</strong>
               <span>{reportSchema ? `${reportSchema.tables.length} tables` : "not loaded"}</span>
             </div>
@@ -687,7 +798,7 @@ function App() {
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
               <strong>Tool Marketplace</strong>
-              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled � ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
+              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled · ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
             </div>
             <div className="connector-grid">
               {(connectorMarketplace?.connectors ?? []).map((connector) => (

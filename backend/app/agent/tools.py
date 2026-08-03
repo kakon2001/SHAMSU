@@ -1,4 +1,4 @@
-"""Tool implementations for the agent.
+﻿"""Tool implementations for the agent.
 
 Read-only tools (list_directory, read_file, search_files) execute immediately.
 Mutating tools (run_shell, write_file) are declared here but the agent loop
@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .. import context_index, vector_index, long_context
+from .. import context_index, vector_index, long_context, dependencies
 from ..web_search import format_search_results, search_web as run_web_search
 from ..config import settings
 
@@ -154,6 +154,15 @@ def long_context_bundle(query: str) -> str:
     return long_context.format_bundle(query)
 
 
+
+def dependency_scan() -> str:
+    """Detect package managers, dependency manifests, and installed libraries in SHAMSU projects."""
+    return json_dumps(dependencies.scan_projects())
+
+
+def dependency_plan(prompt: str, target: str = "auto") -> str:
+    """Plan external libraries for a user goal without installing anything."""
+    return json_dumps(dependencies.plan_dependencies(prompt, target))
 def web_search(query: str) -> str:
     """Search the public web for current information and return sourced snippets."""
     return format_search_results(run_web_search(query))
@@ -364,7 +373,7 @@ def make_diff(path: str, new_content: str) -> tuple[str, bool]:
             tofile=f"b/{path}",
         )
     )
-    return diff or "(no changes — file content is identical)", is_new
+    return diff or "(no changes â€” file content is identical)", is_new
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +475,28 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "type": "function",
+        "function": {
+            "name": "dependency_scan",
+            "description": "Detect project stacks, package managers, manifests, scripts, and installed dependencies. Use before choosing external libraries.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dependency_plan",
+            "description": "Plan npm/pip libraries for a feature goal without installing them. Returns suggested packages, reasons, commands, and approval workflow.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Feature goal or user request."},
+                    "target": {"type": "string", "description": "Project path such as frontend, backend, workspace, or auto."},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },    {
         "type": "function",
         "function": {
             "name": "web_search",
@@ -573,7 +604,7 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "long_context_bundle", "web_search", "project_index", "project_map"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "long_context_bundle", "web_search", "dependency_scan", "dependency_plan", "project_index", "project_map"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
 

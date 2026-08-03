@@ -1,4 +1,4 @@
-"""Stdio MCP server for the SHAMSU tools.
+﻿"""Stdio MCP server for the SHAMSU tools.
 
 The server exposes sandboxed workspace tools and read-only resources over a
 JSON-RPC/MCP-compatible stdio transport. It supports initialize, ping,
@@ -12,7 +12,7 @@ import sys
 from typing import Any, Callable
 from urllib.parse import quote, unquote
 
-from app import context_index, vector_index, long_context
+from app import context_index, vector_index, long_context, dependencies
 from app.web_search import format_search_results, search_web
 from app.agent import tools
 from app.config import settings
@@ -78,6 +78,19 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "dependency_scan",
+        "description": "Detect project stacks, package managers, manifests, scripts, and installed dependencies.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "dependency_plan",
+        "description": "Plan npm/pip libraries for a feature goal without installing them.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}, "target": {"type": "string", "default": "auto"}},
+            "required": ["prompt"],
+        },
+    },    {
         "name": "web_search",
         "description": "Search the public web for current information and return sourced snippets.",
         "inputSchema": {
@@ -144,6 +157,12 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
             _required(args, "query"), budget=_int_arg(args, "budget", 7000, 2500, 16000)
         ),
         "web_search": lambda args: format_search_results(search_web(_required(args, "query"), limit=_int_arg(args, "limit", 5, 1, 10))),
+        "dependency_scan": lambda args: json.dumps(dependencies.scan_projects(), ensure_ascii=False, indent=2),
+        "dependency_plan": lambda args: json.dumps(
+            dependencies.plan_dependencies(_required(args, "prompt"), str(args.get("target") or "auto")),
+            ensure_ascii=False,
+            indent=2,
+        ),
         "project_map": lambda args: json.dumps(
             context_index.project_map(limit=_int_arg(args, "limit", 80, 1, 200)),
             ensure_ascii=False,

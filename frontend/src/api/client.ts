@@ -1,4 +1,4 @@
-import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats, ReportSchema, ReportQueryResult, ReportHistoryItem } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats, ReportSchema, ReportQueryResult, ReportHistoryItem, DependencyScan, DependencyPlan, DependencyInstallResult } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -188,6 +188,20 @@ export function searchVectorContext(query: string, limit = 8): Promise<VectorSea
 
 
 
+
+// ------------------------------------------------------------- dependencies
+
+export function scanDependencies(): Promise<DependencyScan> {
+  return fetch(`${API_BASE}/api/dependencies/scan`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<DependencyScan>(res));
+}
+
+export function planDependencies(prompt: string, target = "auto"): Promise<DependencyPlan> {
+  return post("/api/dependencies/plan", { prompt, target });
+}
+
+export function installDependencies(manager: string, packages: string[], projectPath: string, approve = false, runVerification = false): Promise<DependencyInstallResult> {
+  return post("/api/dependencies/install", { manager, packages, project_path: projectPath, approve, update_manifest: true, run_verification: runVerification });
+}
 // ------------------------------------------------------------------ reports
 
 export function getReportSchema(): Promise<ReportSchema> {

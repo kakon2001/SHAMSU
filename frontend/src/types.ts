@@ -321,3 +321,50 @@ export interface TaskRunResponse {
 
 
 
+
+export interface DependencyProject {
+  path: string;
+  absolute_path: string;
+  managers: string[];
+  dependencies: Record<string, string[]>;
+  scripts: Record<string, string>;
+}
+
+export interface DependencyScan {
+  root: string;
+  projects: DependencyProject[];
+  summary: string;
+}
+
+export interface DependencySuggestion {
+  manager: "npm" | "pip";
+  package: string;
+  reason: string;
+  project_path: string;
+  already_installed: string;
+}
+
+export interface DependencyPlan {
+  prompt: string;
+  target: string;
+  detected: DependencyScan;
+  suggestions: DependencySuggestion[];
+  commands: string[];
+  workflow: string[];
+}
+
+export interface DependencyInstallResult {
+  approved: boolean;
+  ran: boolean;
+  ok?: boolean;
+  manager: string;
+  packages: string[];
+  project_path: string;
+  command: string;
+  message?: string;
+  exit_code?: number;
+  output?: string;
+  elapsed_ms?: number;
+  manifest_updates: string[];
+  verification: Array<{ command: string; ok: boolean; exit_code: number | null; output: string }>;
+}
