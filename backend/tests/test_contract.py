@@ -1484,7 +1484,7 @@ def test_cli_prd_build_prompt_contains_required_workflow() -> None:
     assert "PRD workspace path: uploads/openbazaar.txt" in prompt
     assert "Summarize the PRD requirements" in prompt
     assert "buyer/seller flows" in prompt
-    assert "Do not skip verification" in prompt
+    assert "20-prompt build sequence" in prompt
 
 
 def test_cli_prepare_prd_context_stages_absolute_text_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1515,3 +1515,108 @@ def test_cli_help_includes_prd_build(test_env: dict[str, str]) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "prd-build" in proc.stdout
+
+
+def test_openbazaar_marketplace_prompt_uses_staged_roadmap_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import tasks
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(tasks.tools.settings, "agent_workdir", str(workspace))
+
+    plan = tasks.build_plan("make the full OpenBazaar marketplace project with buyer dashboard seller dashboard auction cod admin")
+
+    assert plan.mode == "openbazaar-20-step-prd-build-roadmap"
+    assert plan.suggested_files == []
+    assert len(plan.steps) == 20
+    assert any("Step 1" in step for step in plan.steps)
+    assert any("Step 20" in step for step in plan.steps)
+
+
+def test_prd_build_prompt_routes_openbazaar_to_staged_roadmap() -> None:
+    import cli
+    from app.routes import tasks
+
+    prd_text = """
+    OpenBazaar marketplace PRD. Users include Guest, Buyer, Seller, and Admin.
+    Features include Cash on Delivery, OTP verification, product listings, live auctions,
+    bids, seller dashboard, buyer dashboard, orders, and admin moderation.
+    """
+    prompt = cli.build_prd_build_prompt("uploads/openbazaar-prd.txt", prd_text)
+    plan = tasks.build_plan(prompt)
+
+    assert plan.mode == "openbazaar-20-step-prd-build-roadmap"
+    assert plan.suggested_files == []
+    assert len(plan.steps) == 20
+
+
+
+
+
+
+
+
+def test_openbazaar_summary_prompt_does_not_generate_files() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan(
+        "Read this OpenBazaar PRD and summarize the roles, pages, database, "
+        "security, and architecture requirements. Do not create files yet."
+    )
+
+    assert plan.mode == "openbazaar-prd-analysis"
+    assert plan.suggested_files == []
+    assert "No files are written" in " ".join(plan.file_plan)
+    assert any("Cash on Delivery" in step for step in plan.steps)
+
+
+def test_openbazaar_roadmap_prompt_does_not_generate_files() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("Create a phase-by-phase roadmap for OpenBazaar. Do not build yet.")
+
+    assert plan.mode == "openbazaar-prd-roadmap"
+    assert plan.suggested_files == []
+    assert any("Phase 1" in step for step in plan.steps)
+
+
+def test_openbazaar_explicit_build_uses_staged_roadmap_by_default() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan(
+        "Build the full OpenBazaar project with frontend backend database security auction and COD."
+    )
+
+    assert plan.mode == "openbazaar-20-step-prd-build-roadmap"
+    assert plan.suggested_files == []
+    assert len(plan.steps) == 20
+
+
+def test_openbazaar_numbered_step_generates_only_that_step_files() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("OpenBazaar step 4 create the application shell")
+
+    assert plan.mode == "openbazaar-staged-prd-build-step-04"
+    assert [item["path"] for item in plan.suggested_files] == ["openbazaar_marketplace/index.html"]
+    assert "step 4 of 20" in " ".join(plan.notes).lower()
+
+
+def test_openbazaar_later_step_does_not_rewrite_files() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("OpenBazaar step 16 verify Cash on Delivery workflow")
+
+    assert plan.mode == "openbazaar-staged-prd-build-step-16"
+    assert plan.suggested_files == []
+    assert any("smoke_test" in command for command in plan.verify_commands)
+
+
+def test_openbazaar_emergency_full_build_is_explicit() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("OpenBazaar emergency full generate everything now")
+
+    assert plan.mode == "openbazaar-full-project-generator"
+    assert any(item["path"] == "openbazaar_marketplace/index.html" for item in plan.suggested_files)
+
