@@ -1,4 +1,4 @@
-﻿"""Command-line client for the SHAMSU backend.
+"""Command-line client for the SHAMSU backend.
 
 The CLI talks to the same FastAPI session API used by the web frontend, so chat
 history, approvals, file edits, shell commands, and activity logs all stay in
@@ -475,7 +475,7 @@ def build_prd_build_prompt(prd_workspace_path: str, prd_text: str) -> str:
     if len(excerpt) > 18000:
         excerpt = excerpt[:18000].rstrip() + "\n\n[PRD truncated for CLI build prompt. Use uploaded file for full context.]"
     return f"""
-Read this PRD and build the system described in it using SHAMSU's autonomous build workflow.
+Read this PRD and start SHAMSU staged PRD Build Mode. Do not generate the final project instantly.
 
 PRD workspace path: {prd_workspace_path}
 
@@ -487,7 +487,7 @@ Follow this exact PRD Build Mode workflow:
 2. Extract user roles, core features, optional features, data entities, pages, and workflows.
 3. Choose the simplest reliable stack for a working faculty-demo system.
 4. Create a file plan.
-5. Build the MVP first with the most important full features running.
+5. Return the 20-prompt build sequence first; create files only when the user runs a numbered OpenBazaar step prompt.
 6. Run build/tests or verification commands.
 7. Repair errors if verification fails.
 8. Start or prepare a preview URL.
@@ -507,7 +507,7 @@ def run_prd_build(base: str, prd_path: str) -> None:
     print("Mode: PRD Build")
     print(f"PRD context: {workspace_path}")
     print(f"Extracted characters: {len(prd_text)}")
-    print("Workflow: read PRD -> requirements -> roadmap -> MVP build -> verify -> preview")
+    print("Workflow: read PRD -> requirements -> 20-step roadmap -> numbered builds -> verify -> preview")
     run_task_build(base, prompt)
     log_cli_event(
         base,
@@ -627,4 +627,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

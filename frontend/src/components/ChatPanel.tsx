@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { uploadContextFile } from "../api/client";
 import type { ChatItem } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -16,6 +16,11 @@ interface Props {
   onUploaded?: () => void;
 }
 
+
+function promptPreview(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
 export function ChatPanel({
   items,
   busy,
@@ -113,7 +118,7 @@ export function ChatPanel({
           {recentActivity.length === 0 && <div className="activity-history__empty">No activity yet.</div>}
           {recentActivity.map((item) => {
             if (item.kind === "user") {
-              return <div key={item.id}>Prompt: {item.content}</div>;
+              return <div key={item.id}>Prompt: {promptPreview(item.content)}</div>;
             }
             if (item.kind === "approval") {
               return <div key={item.id}>Approval: {item.name} ({item.status})</div>;
@@ -178,7 +183,7 @@ export function ChatPanel({
                   });
                 }}
               >
-                Ã—
+                x
               </button>
             </span>
           ))}
@@ -276,6 +281,7 @@ export function ChatPanel({
     </div>
   );
 }
+
 
 
 
