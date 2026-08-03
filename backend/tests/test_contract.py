@@ -1346,3 +1346,172 @@ def test_sql_reporting_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
     history = client.get("/api/reports/history").json()
     assert history["reports"][0]["row_count"] == 1
+
+
+def test_dependency_scan_and_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import dependencies
+
+    root = tmp_path / "repo"
+    frontend = root / "frontend"
+    backend = root / "backend"
+    frontend.mkdir(parents=True)
+    backend.mkdir()
+    (frontend / "package.json").write_text(
+        json.dumps({"scripts": {"build": "vite build"}, "dependencies": {"react": "latest"}}),
+        encoding="utf-8",
+    )
+    (backend / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    monkeypatch.setattr(dependencies, "repo_root", lambda: root)
+
+    scan = dependencies.scan_projects()
+    assert scan["summary"]
+    assert any(project["path"] == "frontend" and "npm" in project["managers"] for project in scan["projects"])
+    assert any(project["path"] == "backend" and "pip" in project["managers"] for project in scan["projects"])
+
+    plan = dependencies.plan_dependencies("make a CRM dashboard with charts", target="frontend")
+    packages = {item["package"] for item in plan["suggestions"]}
+    assert "recharts" in packages
+    assert any(command.startswith("cd frontend && npm install") for command in plan["commands"])
+    assert "Ask approval" in " ".join(plan["workflow"])
+
+
+def test_dependency_install_requires_approval_and_blocks_unsafe_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import dependencies
+
+    root = tmp_path / "repo"
+    frontend = root / "frontend"
+    frontend.mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(dependencies, "repo_root", lambda: root)
+
+    preview = dependencies.install_dependencies("npm", ["recharts"], "frontend", approve=False)
+    assert preview["ran"] is False
+    assert "Approval required" in preview["message"]
+    assert preview["command"] == "npm install recharts"
+
+    with pytest.raises(ValueError):
+        dependencies.install_dependencies("npm", ["--force"], "frontend", approve=True)
+
+
+def test_dependency_install_updates_requirements_after_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import dependencies
+
+    root = tmp_path / "repo"
+    backend = root / "backend"
+    backend.mkdir(parents=True)
+    (backend / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    monkeypatch.setattr(dependencies, "repo_root", lambda: root)
+
+    class FakeProc:
+        returncode = 0
+        stdout = "installed"
+        stderr = ""
+
+    monkeypatch.setattr(dependencies.subprocess, "run", lambda *args, **kwargs: FakeProc())
+    result = dependencies.install_dependencies("pip", ["pypdf"], "backend", approve=True, update_manifest=True)
+
+    assert result["ok"] is True
+    assert "pypdf" in (backend / "requirements.txt").read_text(encoding="utf-8")
+    assert result["manifest_updates"] == ["Added pypdf to requirements.txt"]
+
+
+def test_dependency_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+    from app import dependencies
+    from app.main import app
+
+    root = tmp_path / "repo"
+    frontend = root / "frontend"
+    frontend.mkdir(parents=True)
+    (frontend / "package.json").write_text(json.dumps({"dependencies": {}}), encoding="utf-8")
+    monkeypatch.setattr(dependencies, "repo_root", lambda: root)
+
+    client = TestClient(app)
+    scan = client.get("/api/dependencies/scan").json()
+    assert scan["projects"][0]["path"] == "frontend"
+
+    plan = client.post("/api/dependencies/plan", json={"prompt": "make crm dashboard charts", "target": "frontend"}).json()
+    assert any(item["package"] == "recharts" for item in plan["suggestions"])
+
+    preview = client.post(
+        "/api/dependencies/install",
+        json={"manager": "npm", "packages": ["recharts"], "project_path": "frontend", "approve": False},
+    ).json()
+    assert preview["ran"] is False
+
+    blocked = client.post(
+        "/api/dependencies/install",
+        json={"manager": "npm", "packages": ["--unsafe"], "project_path": "frontend", "approve": True},
+    )
+    assert blocked.status_code == 400
+
+
+def test_agent_exposes_dependency_planning_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent import tools
+
+    monkeypatch.setattr(tools.dependencies, "scan_projects", lambda: {"projects": [], "summary": "none"})
+    monkeypatch.setattr(tools.dependencies, "plan_dependencies", lambda prompt, target="auto": {"prompt": prompt, "target": target, "suggestions": []})
+
+    assert "dependency_scan" in tools.READ_ONLY_TOOLS
+    assert "dependency_plan" in tools.READ_ONLY_TOOLS
+    assert "dependency_scan" in {item["function"]["name"] for item in tools.TOOL_SCHEMAS}
+    assert "none" in tools.dependency_scan()
+    assert "crm" in tools.dependency_plan("crm dashboard")
+
+
+def test_mcp_exposes_dependency_tools(test_env: dict[str, str]) -> None:
+    proc = subprocess.run(
+        [sys.executable, "mcp_server.py"],
+        input='{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    tool_names = {tool["name"] for tool in payload["result"]["tools"]}
+    assert "dependency_scan" in tool_names
+    assert "dependency_plan" in tool_names
+
+
+def test_cli_prd_build_prompt_contains_required_workflow() -> None:
+    import cli
+
+    prompt = cli.build_prd_build_prompt("uploads/openbazaar.txt", "Marketplace PRD with buyer and seller listings")
+
+    assert "PRD workspace path: uploads/openbazaar.txt" in prompt
+    assert "Summarize the PRD requirements" in prompt
+    assert "buyer/seller flows" in prompt
+    assert "Do not skip verification" in prompt
+
+
+def test_cli_prepare_prd_context_stages_absolute_text_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import cli
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = tmp_path / "OpenBazaar_PRD.txt"
+    source.write_text("OpenBazaar marketplace requirements", encoding="utf-8")
+    monkeypatch.setattr(cli.settings, "agent_workdir", str(workspace))
+
+    rel_path, text = cli.prepare_prd_context(str(source))
+
+    assert rel_path.startswith("uploads/cli-prd-")
+    assert rel_path.endswith("OpenBazaar_PRD.txt")
+    assert text == "OpenBazaar marketplace requirements"
+    assert (workspace / rel_path).exists()
+
+
+def test_cli_help_includes_prd_build(test_env: dict[str, str]) -> None:
+    proc = subprocess.run(
+        [sys.executable, "cli.py", "--help"],
+        cwd=BACKEND_DIR,
+        env=test_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "prd-build" in proc.stdout

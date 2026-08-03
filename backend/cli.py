@@ -17,9 +17,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+from pathlib import Path
+from xml.etree import ElementTree
 from typing import Any
 
 from app.agent import tools
+from app.config import settings
 
 
 DEFAULT_API = "http://127.0.0.1:8080"
@@ -417,6 +421,107 @@ def run_task_build(base: str, prompt: str) -> None:
         changed_paths=result.get("created_files") or [],
     )
 
+def prepare_prd_context(prd_path: str) -> tuple[str, str]:
+    """Return (workspace_path, text) for a PRD path or local DOCX/TXT file."""
+    raw_path = Path(prd_path.strip('"')).expanduser()
+    if raw_path.is_absolute() and raw_path.exists():
+        text = extract_prd_text(raw_path)
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw_path.stem).strip("-_.") or "prd"
+        rel_path = f"uploads/cli-prd-{int(time.time())}-{safe_name}.txt"
+        target = settings.workdir_path / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"Uploaded source: {raw_path.name}\n\n{text}", encoding="utf-8")
+        return rel_path, text
+
+    workspace_path = tools.resolve_in_workspace(prd_path)
+    if not workspace_path.exists():
+        raise RuntimeError(f"PRD file was not found: {prd_path}. Upload it first or pass an absolute local path.")
+    text = extract_prd_text(workspace_path)
+    return prd_path, text
+
+
+def extract_prd_text(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        return extract_docx_text(path)
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Could not read PRD file {path}: {exc}") from exc
+
+
+def extract_docx_text(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            xml = archive.read("word/document.xml")
+    except (KeyError, OSError, zipfile.BadZipFile) as exc:
+        raise RuntimeError(f"Could not extract DOCX text from {path}: {exc}") from exc
+    root = ElementTree.fromstring(xml)
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{namespace}p"):
+        parts = [node.text or "" for node in paragraph.iter(f"{namespace}t")]
+        line = "".join(parts).strip()
+        if line:
+            paragraphs.append(line)
+    text = "\n".join(paragraphs).strip()
+    if not text:
+        raise RuntimeError(f"No readable text found in DOCX file: {path}")
+    return text
+
+
+def build_prd_build_prompt(prd_workspace_path: str, prd_text: str) -> str:
+    excerpt = prd_text.strip()
+    if len(excerpt) > 18000:
+        excerpt = excerpt[:18000].rstrip() + "\n\n[PRD truncated for CLI build prompt. Use uploaded file for full context.]"
+    return f"""
+Read this PRD and build the system described in it using SHAMSU's autonomous build workflow.
+
+PRD workspace path: {prd_workspace_path}
+
+PRD content:
+{excerpt}
+
+Follow this exact PRD Build Mode workflow:
+1. Summarize the PRD requirements.
+2. Extract user roles, core features, optional features, data entities, pages, and workflows.
+3. Choose the simplest reliable stack for a working faculty-demo system.
+4. Create a file plan.
+5. Build the MVP first with the most important full features running.
+6. Run build/tests or verification commands.
+7. Repair errors if verification fails.
+8. Start or prepare a preview URL.
+9. Explain what was implemented and what remains.
+
+Implementation rules:
+- Prefer a working demo over an overcomplicated production architecture.
+- If the PRD describes a marketplace, include buyer/seller flows, listings, search, cart/order simulation, dashboard, and clean styling.
+- Do not skip verification.
+- Produce files that can run locally from SHAMSU's workspace/preview system.
+""".strip()
+
+
+def run_prd_build(base: str, prd_path: str) -> None:
+    workspace_path, prd_text = prepare_prd_context(prd_path)
+    prompt = build_prd_build_prompt(workspace_path, prd_text)
+    print("Mode: PRD Build")
+    print(f"PRD context: {workspace_path}")
+    print(f"Extracted characters: {len(prd_text)}")
+    print("Workflow: read PRD -> requirements -> roadmap -> MVP build -> verify -> preview")
+    run_task_build(base, prompt)
+    log_cli_event(
+        base,
+        "prd-build",
+        f"CLI PRD build started from {workspace_path}.",
+        target=workspace_path,
+        ok=True,
+        path=workspace_path,
+        preview=prd_text[:1000],
+        changed_paths=[workspace_path] if workspace_path.startswith("uploads/") else [],
+    )
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI for the SHAMSU backend.")
     parser.add_argument("--api", default=DEFAULT_API, help=f"Backend URL, default {DEFAULT_API}")
@@ -466,6 +571,9 @@ def build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="Run the autonomous plan -> write -> verify -> preview loop when a safe template exists.")
     build.add_argument("prompt", nargs="+", help="Task prompt, e.g. make a bouncing ball game.")
 
+    prd_build = sub.add_parser("prd-build", help="Build a demo system from a PRD file through requirements -> roadmap -> MVP -> verify -> preview.")
+    prd_build.add_argument("prd_path", help="Workspace upload path or absolute local .docx/.txt PRD path.")
+
     return parser
 
 
@@ -503,6 +611,8 @@ def main() -> int:
             print_task_plan(args.api, " ".join(args.prompt))
         elif args.command == "build":
             run_task_build(args.api, " ".join(args.prompt))
+        elif args.command == "prd-build":
+            run_prd_build(args.api, args.prd_path)
         else:
             parser.print_help()
             return 1
