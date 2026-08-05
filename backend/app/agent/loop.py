@@ -7,7 +7,7 @@ until the agent either finishes or pauses on a mutating tool (write_file /
 run_shell) that needs user approval; the response carries all events produced
 since the last request. Approving or rejecting resumes the loop with the real
 result (or the rejection), so the agent can edit a file, run the tests, and
-react to failures within a single turn — no WebSocket required.
+react to failures within a single turn - no WebSocket required.
 
 Sessions are persisted to MySQL (see app.db) at every turn end, so the full
 transcript and conversation survive a backend restart.
@@ -31,10 +31,24 @@ from .tools import MUTATING_TOOLS, TOOL_NAMES, TOOL_SCHEMAS
 
 DEFAULT_TITLE = "New chat"
 activity_log = logging.getLogger("agent.activity")
+TRUNCATION_NOTE = "\n\n[SHAMSU note: The local model reached its output limit. Ask 'continue' if you want the rest of the answer.]"
+
+
+def _is_length_limited(reason: Any) -> bool:
+    if reason is None:
+        return False
+    value = str(reason).lower()
+    return value in {"length", "num_predict", "max_tokens", "stop_length"} or "length" in value or "predict" in value
+
+
+def _append_truncation_note(content: str, reason: Any) -> str:
+    if _is_length_limited(reason) and TRUNCATION_NOTE not in content:
+        return content.rstrip() + TRUNCATION_NOTE
+    return content
 
 
 def _utcnow() -> datetime:
-    # Naive UTC — MySQL DATETIME has no timezone.
+    # Naive UTC - MySQL DATETIME has no timezone.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -107,12 +121,12 @@ def _normalise_tool_payload(parsed: Any) -> Optional[dict[str, Any]]:
 
 def _extract_function_style_tool_call(content: str) -> Optional[dict[str, Any]]:
     patterns = [
-        ("run_shell", r"(?is)run_shell\s*\(\s*(?:command\s*=\s*)?[`'\"]?(.+?)[`'\"]?\s*\)"),
-        ("read_file", r"(?is)read_file\s*\(\s*(?:path\s*=\s*)?[`'\"]?([^`'\")\r\n]+)[`'\"]?\s*\)"),
-        ("list_directory", r"(?is)list_directory\s*\(\s*(?:path\s*=\s*)?[`'\"]?([^`'\")\r\n]*)[`'\"]?\s*\)"),
+        ("run_shell", r'run_shell\s*\(\s*(?:command\s*=\s*)?[`\'\"]([^`\'\"\r\n]+)[`\'\"]\s*\)'),
+        ("read_file", r'read_file\s*\(\s*(?:path\s*=\s*)?[`\'\"]([^`\'\"\r\n]+)[`\'\"]\s*\)'),
+        ("list_directory", r'list_directory\s*\(\s*(?:path\s*=\s*)?[`\'\"]?([^`\'\")\r\n]*)[`\'\"]?\s*\)'),
     ]
     for name, pattern in patterns:
-        match = re.search(pattern, content)
+        match = re.search(pattern, content, flags=re.IGNORECASE | re.DOTALL)
         if not match:
             continue
         value = match.group(1).strip().strip("`'\"")
@@ -125,15 +139,22 @@ def _extract_function_style_tool_call(content: str) -> Optional[dict[str, Any]]:
 # Second line of defense: the model may skip tool calls entirely and dump the "fixed" file as a
 # code fence. If a file was recently read/written, offer that fence as a write_file approval
 # rather than silently losing the edit.
-_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_FENCE_RE = re.compile(r'```[^\n]*\n(.*?)```', re.DOTALL)
 
 
 def _extract_largest_fence(content: str) -> Optional[str]:
     matches = [m.group(1) for m in _FENCE_RE.finditer(content)]
     return max(matches, key=len) if matches else None
 
-_FILE_NAME_RE = re.compile(r"(?i)(?:file\s+(?:(?:named|called)\s+)?|[`'\"])([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)")
-_FILE_LABEL_RE = re.compile(r"(?im)^\s*(?:\*\*)?File\s*:\s*[`'\"]?([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)[`'\"]?")
+
+_FILE_NAME_RE = re.compile(
+    r'(?:file\s+(?:(?:named|called)\s+)?|[`\'\"])([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)',
+    re.IGNORECASE,
+)
+_FILE_LABEL_RE = re.compile(
+    r'^\s*(?:\*\*)?File\s*:\s*[`\'\"]?([A-Za-z0-9_.\-/]+\.[A-Za-z0-9_]+)[`\'\"]?(?:\*\*)?',
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _extract_candidate_file_path(*texts: str) -> Optional[str]:
@@ -192,7 +213,7 @@ class AgentSession:
         self.busy = False
 
     def info(self) -> dict[str, Any]:
-        """Metadata for session lists — no transcript payload."""
+        """Metadata for session lists - no transcript payload."""
         return {
             "id": self.id,
             "title": self.title,
@@ -260,7 +281,7 @@ class AgentSession:
         if self.title == DEFAULT_TITLE:
             # Name the session after its first request so the session list is readable.
             title = " ".join(user_message.split())
-            self.title = title[:57] + "…" if len(title) > 58 else title or DEFAULT_TITLE
+            self.title = title[:57] + "..." if len(title) > 58 else title or DEFAULT_TITLE
         self.busy = True
         self._stop_requested = False
         self._tools_enabled = _should_enable_tools(user_message, context_files or [])
@@ -432,7 +453,7 @@ class AgentSession:
         self._emit(
             {
                 "type": "assistant_message",
-                "content": "I hit the tool-call limit for this turn without finishing — "
+                "content": "I hit the tool-call limit for this turn without finishing - "
                 "ask again or break the request into smaller steps.",
             }
         )
@@ -454,15 +475,17 @@ class AgentSession:
                     "num_predict": settings.max_model_output_tokens,
                 },
             )
+            done_reason: Any = None
             async for part in stream:
                 self._check_stopped()
+                done_reason = part.get("done_reason") or part.get("finish_reason") or done_reason
                 message = part.get("message") or {}
                 chunk = message.get("content") or ""
                 if not chunk:
                     continue
                 chunks.append(chunk)
                 self._emit({"type": "assistant_delta", "id": message_id, "content": chunk})
-            return "".join(chunks), []
+            return _append_truncation_note("".join(chunks), done_reason), []
 
         response = await self._client.chat(
             model=model_registry.get_current_model(),
@@ -477,7 +500,10 @@ class AgentSession:
             },
         )
         message = response.get("message") or {}
-        content = message.get("content") or ""
+        content = _append_truncation_note(
+            message.get("content") or "",
+            response.get("done_reason") or response.get("finish_reason"),
+        )
         tool_calls: list[dict[str, Any]] = []
         for tc in message.get("tool_calls") or []:
             fn = tc.get("function") or {}
