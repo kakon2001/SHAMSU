@@ -361,10 +361,16 @@ function App() {
 
   const runAutoBuild = useCallback((prompt: string) => {
     const id = `build-${Date.now()}`;
+    const submittedAt = Date.now();
     setAutoBuildItems((prev) => [
       ...prev,
-      { kind: "user", id: `${id}-user`, content: prompt },
-      { kind: "assistant", id: `${id}-working`, content: "SHAMSU accepted this build request and is working on it..." },
+      { kind: "user", id: `${id}-user`, content: prompt, submittedAt },
+      {
+        kind: "assistant",
+        id: `${id}-working`,
+        content: "SHAMSU accepted this request and is working on it...",
+        submittedAt: submittedAt + 1,
+      },
     ]);
     setNotice("SHAMSU is working on your build request...");
     setAutoBuildBusy(true);
@@ -421,9 +427,12 @@ function App() {
     handleFilesChanged,
     refreshSessions,
   );
+  const orderedChatItems = [...items, ...autoBuildItems].sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0));
   const sendOrBuild = useCallback((text: string, contextFiles: string[], contextFileLabels: Record<string, string> = {}) => {
     const lower = text.toLowerCase();
-    const shouldAutoBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower);
+    const isOpenBazaarStep = /\bopenbazaar\b/.test(lower) && /\b(step|stage|phase|prompt)\s*#?\s*\d{1,2}\b/.test(lower);
+    const isOpenBazaarBuild = /\bopenbazaar\b/.test(lower) && /\b(build|create|generate|implement|project)\b/.test(lower);
+    const shouldAutoBuild = isOpenBazaarStep || isOpenBazaarBuild || (contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower));
     if (shouldAutoBuild) {
       runAutoBuild(text);
       return;
@@ -798,7 +807,7 @@ function App() {
           <div className="dashboard-git">
             <div className="dashboard-panel__header">
               <strong>Tool Marketplace</strong>
-              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled · ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
+              <span>{connectorMarketplace ? `${connectorMarketplace.enabled_count} enabled - ${connectorMarketplace.planned_count} planned` : "not loaded"}</span>
             </div>
             <div className="connector-grid">
               {(connectorMarketplace?.connectors ?? []).map((connector) => (
@@ -872,7 +881,7 @@ function App() {
             <button className="app__new-chat app__session-delete" onClick={removeSession} disabled={busy || !activeSessionId} title="Delete this session">Delete</button>
           </div>
           <ChatPanel
-            items={[...items, ...autoBuildItems]}
+            items={orderedChatItems}
             busy={busy || autoBuildBusy}
             connected={connected}
             files={workspaceFiles}
@@ -928,6 +937,9 @@ function App() {
 }
 
 export default App;
+
+
+
 
 
 

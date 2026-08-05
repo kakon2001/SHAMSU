@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+﻿import { useEffect, useRef, useState, type FormEvent } from "react";
 import { uploadContextFile } from "../api/client";
 import type { ChatItem } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -21,6 +21,11 @@ function promptPreview(text: string): string {
   const compact = text.replace(/\s+/g, " ").trim();
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
+
+function userPromptNumber(items: ChatItem[], targetId: string): number {
+  return items.filter((item) => item.kind === "user").findIndex((item) => item.id === targetId) + 1;
+}
+
 export function ChatPanel({
   items,
   busy,
@@ -100,6 +105,9 @@ export function ChatPanel({
   const recentActivity = items
     .filter((it) => it.kind === "user" || it.kind === "approval" || it.kind === "error")
     .slice(-8);
+  const userItems = items.filter((it) => it.kind === "user");
+  const latestUser = userItems[userItems.length - 1];
+  const latestPromptNumber = latestUser ? userPromptNumber(items, latestUser.id) : 0;
 
   const pickable = files.filter((f) => !attached.includes(f));
   const filtered = filter
@@ -113,12 +121,14 @@ export function ChatPanel({
   return (
     <div className="chat-panel">
       <details className="activity-history">
-        <summary><span>Activity history</span></summary>
+        <summary><span>Prompt tracker</span><small>recent prompts</small></summary>
         <div className="activity-history__list">
           {recentActivity.length === 0 && <div className="activity-history__empty">No activity yet.</div>}
           {recentActivity.map((item) => {
             if (item.kind === "user") {
-              return <div key={item.id}>Prompt: {promptPreview(item.content)}</div>;
+                            const number = userPromptNumber(items, item.id);
+              const latest = item.id === latestUser?.id ? " latest" : "";
+              return <div key={item.id} className={`activity-history__row${latest}`}>Prompt {number}: {promptPreview(item.content)}</div>;
             }
             if (item.kind === "approval") {
               return <div key={item.id}>Approval: {item.name} ({item.status})</div>;
@@ -142,6 +152,7 @@ export function ChatPanel({
                   key={item.id}
                   role="user"
                   content={item.content}
+                  badge={item.id === latestUser?.id ? `Latest prompt ${latestPromptNumber}` : undefined}
                   files={item.contextFiles}
                   fileLabels={item.contextFileLabels}
                 />
@@ -165,6 +176,13 @@ export function ChatPanel({
           <div className="chat-panel__waiting">Waiting for your approval above</div>
         )}
       </div>
+
+      {latestUser && (
+        <div className="chat-panel__current-prompt">
+          <strong>Current prompt {latestPromptNumber}</strong>
+          <span>{promptPreview(latestUser.content)}</span>
+        </div>
+      )}
 
       {attached.length > 0 && (
         <div className="chat-panel__chips">
@@ -281,6 +299,8 @@ export function ChatPanel({
     </div>
   );
 }
+
+
 
 
 

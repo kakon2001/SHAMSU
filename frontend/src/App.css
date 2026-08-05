@@ -1,4 +1,4 @@
-﻿.app {
+.app {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1520,3 +1520,4 @@
     grid-template-columns: 1fr;
   }
 }
+

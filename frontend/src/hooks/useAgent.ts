@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getAgentState,
   postApproval,
@@ -29,37 +29,38 @@ function eventsToItems(
   onFilesChanged: (paths: string[]) => void,
 ): ChatItem[] {
   let items = prev;
+  const stamp = () => Date.now() + nextId / 1000;
   for (const ev of events) {
     switch (ev.type) {
       case "user_message":
         if (includeUser)
           items = [
             ...items,
-            { kind: "user", id: uid(), content: ev.content, contextFiles: ev.context_files, contextFileLabels: ev.context_file_labels },
+            { kind: "user", id: uid(), content: ev.content, contextFiles: ev.context_files, contextFileLabels: ev.context_file_labels, submittedAt: stamp() },
           ];
         break;
       case "assistant_message":
         if (ev.id && items.some((it) => it.kind === "assistant" && it.id === ev.id)) {
           items = items.map((it) =>
-            it.kind === "assistant" && it.id === ev.id ? { ...it, content: ev.content } : it,
+            it.kind === "assistant" && it.id === ev.id ? { ...it, content: ev.content, submittedAt: it.submittedAt ?? stamp() } : it,
           );
         } else {
-          items = [...items, { kind: "assistant", id: ev.id ?? uid(), content: ev.content }];
+          items = [...items, { kind: "assistant", id: ev.id ?? uid(), content: ev.content, submittedAt: stamp() }];
         }
         break;
       case "assistant_delta":
         if (items.some((it) => it.kind === "assistant" && it.id === ev.id)) {
           items = items.map((it) =>
             it.kind === "assistant" && it.id === ev.id
-              ? { ...it, content: it.content + ev.content }
+              ? { ...it, content: it.content + ev.content, submittedAt: it.submittedAt ?? stamp() }
               : it,
           );
         } else {
-          items = [...items, { kind: "assistant", id: ev.id, content: ev.content }];
+          items = [...items, { kind: "assistant", id: ev.id, content: ev.content, submittedAt: stamp() }];
         }
         break;
       case "tool_call":
-        items = [...items, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, status: "running" }];
+        items = [...items, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, status: "running", submittedAt: stamp() }];
         break;
       case "tool_result":
         items = items.map((it) =>
@@ -96,7 +97,7 @@ function eventsToItems(
         onFilesChanged(ev.paths);
         break;
       case "error":
-        items = [...items, { kind: "error", id: uid(), content: ev.message }];
+        items = [...items, { kind: "error", id: uid(), content: ev.message, submittedAt: stamp() }];
         break;
       case "turn_end":
         break;
@@ -124,7 +125,7 @@ export function useAgent(
   const onSessionActivityRef = useRef(onSessionActivity);
   onSessionActivityRef.current = onSessionActivity;
 
-  // The session the UI is currently showing — late responses from other
+  // The session the UI is currently showing â€” late responses from other
   // sessions must not touch the visible transcript.
   const sessionRef = useRef<string | null>(sessionId);
   sessionRef.current = sessionId;
@@ -162,12 +163,12 @@ export function useAgent(
 
   const fail = useCallback((err: unknown) => {
     const message = err instanceof Error ? err.message : "Request to the agent backend failed.";
-    setItems((prev) => [...prev, { kind: "error", id: uid(), content: message }]);
+    setItems((prev) => [...prev, { kind: "error", id: uid(), content: message, submittedAt: Date.now() }]);
   }, []);
 
   // Apply a response, then keep long-polling while the agent is generating
   // with nothing for the user to approve. Stops early if the user switches
-  // sessions — the backend turn keeps running without us.
+  // sessions â€” the backend turn keeps running without us.
   const pump = useCallback(
     async (sid: string, first: Promise<AgentResponse>, includeUser = false) => {
       if (pumpingRef.current.has(sid)) return;
@@ -187,7 +188,7 @@ export function useAgent(
             setBusy(res.busy);
           }
         }
-        // Turn settled (or paused) — let the app refresh session titles/order.
+        // Turn settled (or paused) â€” let the app refresh session titles/order.
         onSessionActivityRef.current?.();
       } catch (err) {
         if (sessionRef.current === sid) {
@@ -224,7 +225,7 @@ export function useAgent(
     (content: string, contextFiles: string[] = [], contextFileLabels: Record<string, string> = {}) => {
       const sid = sessionRef.current;
       if (!sid) return;
-      setItems((prev) => [...prev, { kind: "user", id: uid(), content, contextFiles, contextFileLabels }]);
+      setItems((prev) => [...prev, { kind: "user", id: uid(), content, contextFiles, contextFileLabels, submittedAt: Date.now() }]);
       void pump(sid, postChat(sid, content, contextFiles, contextFileLabels));
     },
     [pump],

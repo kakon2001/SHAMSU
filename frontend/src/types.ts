@@ -1,4 +1,4 @@
-export interface AuthUser {
+﻿export interface AuthUser {
   id: string;
   email: string;
   name: string;
@@ -69,9 +69,10 @@ export interface SessionInfo {
 }
 
 /** Items rendered in the chat transcript. */
+/** Items rendered in the chat transcript. */
 export type ChatItem =
-  | { kind: "user"; id: string; content: string; contextFiles?: string[]; contextFileLabels?: Record<string, string> }
-  | { kind: "assistant"; id: string; content: string }
+  | { kind: "user"; id: string; content: string; contextFiles?: string[]; contextFileLabels?: Record<string, string>; submittedAt?: number }
+  | { kind: "assistant"; id: string; content: string; submittedAt?: number }
   | {
       kind: "tool";
       id: string;
@@ -79,6 +80,7 @@ export type ChatItem =
       args: Record<string, unknown>;
       status: "running" | "done" | "error";
       preview?: string;
+      submittedAt?: number;
     }
   | {
       kind: "approval";
@@ -91,8 +93,9 @@ export type ChatItem =
       risk?: string;
       riskReason?: string;
       status: "pending" | "approved" | "rejected";
+      submittedAt?: number;
     }
-  | { kind: "error"; id: string; content: string };
+  | { kind: "error"; id: string; content: string; submittedAt?: number };
 
 export interface EditorTab {
   path: string;
