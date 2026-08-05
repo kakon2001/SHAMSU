@@ -1620,3 +1620,38 @@ def test_openbazaar_emergency_full_build_is_explicit() -> None:
     assert plan.mode == "openbazaar-full-project-generator"
     assert any(item["path"] == "openbazaar_marketplace/index.html" for item in plan.suggested_files)
 
+
+
+
+def test_toy_os_build_mode_generates_kernel_scaffold() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("Make a toy operating system that boots in QEMU and prints Welcome to SHAMSU OS")
+
+    paths = {item["path"] for item in plan.suggested_files}
+    assert plan.mode == "toy-os-build-mode"
+    assert "shamsu_os/boot.asm" in paths
+    assert "shamsu_os/kernel.c" in paths
+    assert "shamsu_os/linker.ld" in paths
+    assert "shamsu_os/Makefile" in paths
+    assert any("qemu-system-i386" in command for command in plan.verify_commands)
+    assert any("not a production OS" in note for note in plan.notes)
+
+
+def test_toy_os_run_writes_and_verifies_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from app.agent import tools
+    from app.routes import tasks
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(tools.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(workspace))
+
+    result = asyncio.run(tasks.run_task(tasks.TaskRunRequest(prompt="Create a toy OS kernel for QEMU", preview=False)))
+
+    assert result.ok is True
+    assert "shamsu_os/kernel.c" in result.created_files
+    assert (workspace / "shamsu_os" / "kernel.c").exists()
+    assert "Welcome to SHAMSU OS" in (workspace / "shamsu_os" / "kernel.c").read_text(encoding="utf-8")
+    assert any(step.name == "verify" and step.status == "ok" for step in result.steps)
