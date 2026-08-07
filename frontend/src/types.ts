@@ -24,10 +24,14 @@ export interface UploadedContextFile {
   name: string;
   path: string;
   chars: number;
-  kind: "pdf" | "text";
+  kind: "pdf" | "docx" | "text";
   extension?: string;
   summary?: string;
   preview?: string;
+  words?: number;
+  lines?: number;
+  bytes?: number;
+  suggested_prompts?: string[];
 }
 
 /** Events recorded by the backend agent session. */
@@ -282,6 +286,14 @@ export interface ReportHistoryItem {
   preview: Record<string, unknown>[];
   created_at: number;
 }
+export interface PreviewArtifact {
+  path: string;
+  title: string;
+  kind: string;
+  bytes: number;
+  url: string;
+}
+
 export interface PreviewState {
   running: boolean;
   managed: boolean;
@@ -371,3 +383,4 @@ export interface DependencyInstallResult {
   manifest_updates: string[];
   verification: Array<{ command: string; ok: boolean; exit_code: number | null; output: string }>;
 }
+

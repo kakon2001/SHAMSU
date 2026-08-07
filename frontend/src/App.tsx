@@ -11,6 +11,7 @@ import {
   getConnectors,
   getFileContent,
   getFileTree,
+  getPreviewArtifacts,
   getGitLog,
   getGitSearch,
   getGitStatus,
@@ -29,6 +30,7 @@ import {
   register,
   rebuildVectorIndex,
   runTaskBuild,
+  startPreviewServer,
   saveFileContent,
   setAuthToken,
   setCurrentModel,
@@ -36,7 +38,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema, DependencyScan, DependencyPlan, DependencyInstallResult } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema, DependencyScan, DependencyPlan, DependencyInstallResult, PreviewArtifact } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -96,6 +98,9 @@ function App() {
   const [dependencyBusy, setDependencyBusy] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [autoBuildBusy, setAutoBuildBusy] = useState(false);
+  const [previewArtifacts, setPreviewArtifacts] = useState<PreviewArtifact[]>([]);
+  const [activeArtifactPath, setActiveArtifactPath] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [autoBuildItems, setAutoBuildItems] = useState<ChatItem[]>([]);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -138,6 +143,32 @@ function App() {
   const refreshModels = useCallback(() => {
     getModels().then(setModelState).catch((err: Error) => setNotice(err.message));
   }, []);
+
+  const refreshPreviewArtifacts = useCallback(() => {
+    return getPreviewArtifacts()
+      .then((artifacts) => {
+        setPreviewArtifacts(artifacts);
+        setActiveArtifactPath((current) => current && artifacts.some((artifact) => artifact.path === current) ? current : artifacts[0]?.path ?? "");
+      })
+      .catch((err: Error) => setNotice(err.message));
+  }, []);
+
+  const openArtifactPreview = useCallback(() => {
+    const path = activeArtifactPath || previewArtifacts[0]?.path || activePath || "";
+    if (!path) {
+      setNotice("No previewable artifact found yet.");
+      return;
+    }
+    setPreviewBusy(true);
+    startPreviewServer(path, 9000)
+      .then((state) => {
+        setNotice(state.message);
+        window.open(state.url, "_blank", "noopener,noreferrer");
+        return refreshPreviewArtifacts();
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setPreviewBusy(false));
+  }, [activeArtifactPath, activePath, previewArtifacts, refreshPreviewArtifacts]);
 
 
   const runGitSearch = useCallback(() => {
@@ -369,7 +400,8 @@ function App() {
     void refreshFileTree();
     reloadCleanTabs();
     refreshDashboard();
-  }, [refreshFileTree, reloadCleanTabs, refreshDashboard]);
+    void refreshPreviewArtifacts();
+  }, [refreshFileTree, reloadCleanTabs, refreshDashboard, refreshPreviewArtifacts]);
 
 
   const runAutoBuild = useCallback((prompt: string) => {
@@ -392,6 +424,7 @@ function App() {
         void refreshFileTree();
         reloadCleanTabs();
         refreshDashboard();
+        void refreshPreviewArtifacts();
         if (result.preview_url) {
           window.open(result.preview_url, "_blank", "noopener,noreferrer");
         }
@@ -433,7 +466,7 @@ function App() {
         setNotice(err.message);
       })
       .finally(() => setAutoBuildBusy(false));
-  }, [refreshDashboard, refreshFileTree, reloadCleanTabs]);
+  }, [refreshDashboard, refreshFileTree, refreshPreviewArtifacts, reloadCleanTabs]);
 
   const { items, connected, busy, sendChat, respondApproval, stop, reset } = useAgent(
     activeSessionId,
@@ -457,7 +490,8 @@ function App() {
 
   useEffect(() => {
     void refreshFileTree();
-  }, [refreshFileTree]);
+    void refreshPreviewArtifacts();
+  }, [refreshFileTree, refreshPreviewArtifacts]);
 
   useEffect(() => {
     refreshModels();
@@ -906,6 +940,7 @@ function App() {
             onRespondApproval={respondApproval}
             onUploaded={() => {
               void refreshFileTree(true);
+              void refreshPreviewArtifacts();
               refreshDashboard();
             }}
           />
@@ -930,11 +965,32 @@ function App() {
               className="workspace-panel__refresh"
               onClick={() => {
                 void refreshFileTree(true);
+                void refreshPreviewArtifacts();
                 reloadCleanTabs();
               }}
               disabled={refreshingFiles}
             >
               {refreshingFiles ? "Refreshing" : "Refresh"}
+            </button>
+            <select
+              className="workspace-panel__select workspace-panel__select--artifact"
+              value={activeArtifactPath}
+              onChange={(e) => setActiveArtifactPath(e.target.value)}
+              disabled={previewArtifacts.length === 0}
+              title="Choose generated preview artifact"
+            >
+              <option value="">Preview artifact</option>
+              {previewArtifacts.map((artifact) => (
+                <option key={artifact.path} value={artifact.path}>{artifact.title} - {artifact.path}</option>
+              ))}
+            </select>
+            <button
+              className="workspace-panel__preview"
+              onClick={openArtifactPreview}
+              disabled={previewBusy || previewArtifacts.length === 0}
+              title="Start preview server and open selected artifact"
+            >
+              {previewBusy ? "Opening" : "Open preview"}
             </button>
           </div>
           <EditorPane
@@ -952,4 +1008,5 @@ function App() {
 }
 
 export default App;
+
 

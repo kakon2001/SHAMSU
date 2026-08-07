@@ -1,4 +1,4 @@
-﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats, ReportSchema, ReportQueryResult, ReportHistoryItem, DependencyScan, DependencyPlan, DependencyInstallResult } from "../types";
+﻿import type { AgentResponse, FileContent, FileNode, SessionInfo, UploadedContextFile, AdminOverview, ContextDashboard, ModelState, PreviewState, PreviewArtifact, TaskRunResponse, AuthResponse, AuthUser, GitStatus, GitCommit, GitSearchHit, WebSearchResponse, ConnectorMarketplace, VectorRebuildResponse, VectorSearchResponse, VectorStats, ReportSchema, ReportQueryResult, ReportHistoryItem, DependencyScan, DependencyPlan, DependencyInstallResult } from "../types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
 
@@ -245,6 +245,12 @@ export function getGitSearch(query: string, limit = 12): Promise<{ query: string
 }
 // ----------------------------------------------------------------- preview
 
+export function getPreviewArtifacts(port = 9000, limit = 50): Promise<PreviewArtifact[]> {
+  const params = new URLSearchParams({ port: String(port), limit: String(limit) });
+  return fetch(`${API_BASE}/api/preview/artifacts?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<PreviewArtifact[]>(res));
+}
+
+
 export function getPreviewStatus(path = "", port = 9000): Promise<PreviewState> {
   const params = new URLSearchParams({ path, port: String(port) });
   return fetch(`${API_BASE}/api/preview/status?${params.toString()}`, { cache: "no-store", headers: authHeaders() }).then((res) => handle<PreviewState>(res));
@@ -263,6 +269,7 @@ export function stopPreviewServer(): Promise<PreviewState> {
 export function runTaskBuild(prompt: string, preview = true): Promise<TaskRunResponse> {
   return post("/api/tasks/run", { prompt, preview, overwrite: true });
 }
+
 
 
 

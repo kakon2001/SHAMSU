@@ -1,6 +1,6 @@
 ﻿import { useEffect, useRef, useState, type FormEvent } from "react";
 import { uploadContextFile } from "../api/client";
-import type { ChatItem } from "../types";
+import type { ChatItem, UploadedContextFile } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
 
@@ -43,7 +43,7 @@ export function ChatPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<{ kind: "success" | "error"; text: string; file?: UploadedContextFile } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -90,7 +90,8 @@ export function ChatPanel({
       attach(uploaded.path);
       setUploadStatus({
         kind: "success",
-        text: `${uploaded.summary ?? `Attached ${uploaded.name}`} (${uploaded.chars.toLocaleString()} chars extracted).`,
+        text: `${uploaded.name} attached. Extracted ${uploaded.chars.toLocaleString()} chars, ${(uploaded.words ?? 0).toLocaleString()} words.`,
+        file: uploaded,
       });
       onUploaded?.();
     } catch (err) {
@@ -209,7 +210,17 @@ export function ChatPanel({
       )}
       {uploadStatus && (
         <div className={`chat-panel__upload-status chat-panel__upload-status--${uploadStatus.kind}`}>
-          {uploadStatus.text}
+          <strong>{uploadStatus.text}</strong>
+          {uploadStatus.file?.preview && <p>{uploadStatus.file.preview}</p>}
+          {uploadStatus.file?.suggested_prompts?.length ? (
+            <div className="chat-panel__upload-suggestions">
+              {uploadStatus.file.suggested_prompts.map((prompt) => (
+                <button key={prompt} type="button" onClick={() => setInput(prompt)}>
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -235,7 +246,7 @@ export function ChatPanel({
                   onClick={() => uploadRef.current?.click()}
                 >
                   <strong>Upload from laptop</strong>
-                  <span>Attach a PDF, text, code, or data file.</span>
+                  <span>Attach a PDF, Word, text, code, or data file.</span>
                 </button>
                 <button
                   type="button"
@@ -277,7 +288,7 @@ export function ChatPanel({
           ref={uploadRef}
           type="file"
           className="chat-panel__upload-input"
-          accept=".pdf,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.yaml,.yml,.log"
+          accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.yaml,.yml,.log"
           onChange={(e) => void handleUpload(e.target.files?.[0])}
         />
         <input
@@ -299,6 +310,7 @@ export function ChatPanel({
     </div>
   );
 }
+
 
 
 
