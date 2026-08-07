@@ -1,4 +1,4 @@
-"""High-signal long-context bundle for large SHAMSU project questions.
+﻿"""High-signal long-context bundle for large SHAMSU project questions.
 
 The regular context index can return exact keyword chunks, and the vector index can
 return semantic matches. This module combines them with project memory and symbol
@@ -25,6 +25,7 @@ def build_bundle(query: str, budget: int = DEFAULT_BUDGET, fast: bool = False) -
     semantic_matches = [] if fast else (_safe_semantic_matches(query, limit=8) if query else [])
     symbols = _fast_symbol_matches(query, limit=8) if fast and query else (symbol_matches(query, limit=12) if query else [])
     memory = project_memory(project, query, budget=1400 if fast else 1800)
+    understanding = context_index.project_understanding(query, limit=6) if query else {}
 
     return {
         "query": query,
@@ -42,6 +43,7 @@ def build_bundle(query: str, budget: int = DEFAULT_BUDGET, fast: bool = False) -
             for match in keyword_matches
         ],
         "semantic_matches": semantic_matches,
+        "understanding": understanding,
         "project": {
             "languages": project.get("languages") or {},
             "frameworks": project.get("frameworks") or [],
@@ -49,7 +51,7 @@ def build_bundle(query: str, budget: int = DEFAULT_BUDGET, fast: bool = False) -
             "important_files": project.get("important_files") or [],
             "large_files": project.get("large_files") or [],
         },
-        "context": format_bundle_parts(memory, symbols, keyword_matches, semantic_matches, project, budget=budget),
+        "context": format_bundle_parts(memory, symbols, keyword_matches, semantic_matches, project, budget=budget, understanding=understanding),
     }
 
 
@@ -203,8 +205,22 @@ def format_bundle_parts(
     semantic_matches: list[dict[str, object]],
     project: dict[str, object],
     budget: int = DEFAULT_BUDGET,
+    understanding: dict[str, object] | None = None,
 ) -> str:
     sections: list[str] = []
+    if understanding:
+        strategy = understanding.get("edit_strategy") or []
+        read_plan = understanding.get("read_plan") or []
+        lines = ["Project understanding"]
+        task = understanding.get("task_profile") or {}
+        if isinstance(task, dict):
+            lines.append(f"Task: {task.get('kind')} risk={task.get('risk')} reason={task.get('reason')}")
+        for item in strategy[:4]:
+            lines.append(f"- {item}")
+        for item in read_plan[:5]:
+            if isinstance(item, dict):
+                lines.append(f"- read {item.get('path')}:{item.get('start_line')}-{item.get('end_line')} with {item.get('tool')}")
+        sections.append("\n".join(lines))
     if memory:
         sections.append("Project memory\n" + memory)
     if symbols:
@@ -238,3 +254,6 @@ def _compact(text: str, limit: int) -> str:
 def _split_identifier(name: str) -> str:
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name or "")
     return spaced.replace("_", " ").replace("-", " ")
+
+
+

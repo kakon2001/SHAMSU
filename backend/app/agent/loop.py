@@ -599,6 +599,9 @@ class AgentSession:
             return tools.web_search(query)
         if name == "project_map":
             return tools.project_map(args.get("path") or ".")
+        if name == "project_understanding":
+            query = args.get("query") or self._last_user_message
+            return tools.project_understanding(str(query))
 
         if name == "project_index":
             return tools.project_index(args.get("path") or ".")
@@ -751,14 +754,14 @@ def _tool_workflow_brief(user_message: str, policy: query_policy.QueryPolicy, co
     if any(term in lower for term in ["bug", "fix", "error", "traceback", "broken", "not working", "issue"]):
         lines.extend(
             [
-                "- Debug path: inspect project_map/project_index, search the error or symbol, read only relevant ranges, patch the smallest exact block, then verify.",
+                "- Debug path: inspect project_understanding first, then search the error or symbol, read only relevant ranges, patch the smallest exact block, then verify.",
                 "- Do not rewrite unrelated files while fixing one bug.",
             ]
         )
     elif any(term in lower for term in ["large file", "huge file", "100000", "100,000", "big project", "multi-file", "codebase"]):
         lines.extend(
             [
-                "- Large-project path: use project_index, semantic_search, and read_file_range; avoid reading or rewriting huge whole files.",
+                "- Large-project path: use project_understanding, semantic_search, project_index, and read_file_range; avoid reading or rewriting huge whole files.",
                 "- Build a patch plan from file ranges, then edit only confirmed blocks.",
             ]
         )
@@ -837,4 +840,6 @@ def _attachment_label(path: str) -> str:
         if len(parts) == 4:
             return parts[3].removesuffix(".txt")
     return name
+
+
 

@@ -204,6 +204,11 @@ def project_map(path: str = ".") -> str:
     return json_dumps(context_index.project_map())
 
 
+def project_understanding(query: str = "") -> str:
+    """Return a Claude-like report for understanding and safely editing complex projects."""
+    return json_dumps(context_index.project_understanding(query))
+
+
 def project_index(path: str = ".") -> str:
     """Return a compact local project index with files, sizes, symbols, and imports."""
     root = resolve_in_workspace(path)
@@ -541,6 +546,17 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "project_understanding",
+            "description": "Build a Claude-like large-project understanding report with architecture, likely files, read ranges, edit strategy, and verification commands. Use before complex multi-file edits or broad bugfixes.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "The user's project question, bug, or feature request."}},
+                "required": ["query"],
+            },
+        },
+    },    {
+        "type": "function",
+        "function": {
             "name": "project_index",
             "description": "Build a compact index of project files, sizes, symbols, and imports for multi-file reasoning.",
             "parameters": {
@@ -604,8 +620,9 @@ TOOL_SCHEMAS = [
     },
 ]
 
-READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "long_context_bundle", "web_search", "dependency_scan", "dependency_plan", "project_index", "project_map"}
+READ_ONLY_TOOLS = {"list_directory", "read_file", "read_file_range", "search_files", "search_context", "semantic_search", "long_context_bundle", "web_search", "dependency_scan", "dependency_plan", "project_index", "project_map", "project_understanding"}
 MUTATING_TOOLS = {"write_file", "replace_in_file", "run_shell"}
 TOOL_NAMES = READ_ONLY_TOOLS | MUTATING_TOOLS
+
 
 

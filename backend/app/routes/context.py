@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+﻿from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from .. import context_index, vector_index, long_context
@@ -48,6 +48,11 @@ async def context_overview(query: str = Query("")) -> dict[str, object]:
         "query": query,
         "overview": context_index.automatic_summary_context(query),
     }
+
+
+@router.get("/understand")
+async def context_understand(query: str = Query(""), limit: int = Query(12, ge=1, le=30)) -> dict[str, object]:
+    return context_index.project_understanding(query, limit=limit)
 
 
 @router.get("/project-map")

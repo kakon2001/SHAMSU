@@ -1,4 +1,4 @@
-"""Lightweight workspace context index.
+﻿"""Lightweight workspace context index.
 
 Text files in the workspace are split into chunks and searched with keyword
 overlap. This module also builds compact file, upload, and conversation
@@ -526,6 +526,173 @@ def _dependency_edges(files: list[dict[str, object]]) -> list[dict[str, str]]:
                 if edge not in edges:
                     edges.append(edge)
     return edges
+
+
+def project_understanding(query: str = "", limit: int = 12) -> dict[str, object]:
+    """Return a Claude-like orientation report for complex multi-file work.
+
+    The report is intentionally actionable: it names the likely architecture,
+    candidate files, bounded read ranges, edit risk, and verification commands
+    before the agent attempts broad edits.
+    """
+    query = query or ""
+    terms = set(_terms(query))
+    mapping = project_map(limit=160)
+    records = _project_file_records(limit=160)
+    candidates = sorted(records, key=lambda item: _query_file_score(item, terms), reverse=True)
+    if terms:
+        candidates = [item for item in candidates if _query_file_score(item, terms) > 0] or candidates
+    likely_files = _public_file_records(candidates[: max(1, limit)])
+    large_files = _public_file_records([item for item in records if item.get("large")][:8])
+    return {
+        "query": query,
+        "task_profile": _task_profile(query),
+        "architecture": {
+            "languages": mapping.get("languages") or {},
+            "frameworks": mapping.get("frameworks") or [],
+            "entry_points": mapping.get("entry_points") or [],
+            "dependency_edges": (mapping.get("dependency_edges") or [])[:30],
+        },
+        "likely_files": likely_files,
+        "large_files": large_files,
+        "read_plan": _read_plan_for_files(candidates[: max(1, limit)], query),
+        "edit_strategy": _edit_strategy(query, likely_files, large_files),
+        "verification_commands": _verification_commands_for_project(records),
+        "notes": [
+            "Use this understanding report before large edits or broad bug fixes.",
+            "Read the suggested ranges before patching; summaries are not enough for exact edits.",
+            "Prefer replace_in_file for small confirmed changes and write_file for new files only.",
+        ],
+    }
+
+
+def project_understanding_context(query: str = "", budget: int = 3600) -> str:
+    report = project_understanding(query, limit=8)
+    lines = ["Large-project understanding"]
+    task = report.get("task_profile") or {}
+    if isinstance(task, dict):
+        lines.append(f"Task profile: {task.get('kind')} risk={task.get('risk')} reason={task.get('reason')}")
+    arch = report.get("architecture") or {}
+    if isinstance(arch, dict):
+        languages = arch.get("languages") or {}
+        frameworks = arch.get("frameworks") or []
+        if languages:
+            lines.append("Languages: " + ", ".join(f"{name}={count}" for name, count in dict(languages).items()))
+        if frameworks:
+            lines.append("Frameworks: " + ", ".join(str(item) for item in frameworks[:8]))
+    likely = report.get("likely_files") or []
+    if likely:
+        lines.append("Likely files:")
+        for item in likely[:8]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('path')} [{item.get('role')}, {item.get('language')}, {item.get('lines')} lines] {item.get('summary')}")
+    read_plan = report.get("read_plan") or []
+    if read_plan:
+        lines.append("Suggested read ranges:")
+        for item in read_plan[:8]:
+            if isinstance(item, dict):
+                lines.append(f"- read_file_range({item.get('path')}, {item.get('start_line')}, {item.get('end_line')}) because {item.get('reason')}")
+    verify = report.get("verification_commands") or []
+    if verify:
+        lines.append("Verification commands: " + "; ".join(str(command) for command in verify[:5]))
+    result = "\n".join(lines)
+    if len(result) > budget:
+        result = result[:budget].rstrip() + "\n... [project understanding truncated]"
+    return result
+
+
+def _task_profile(query: str) -> dict[str, str]:
+    lower = query.lower()
+    if any(term in lower for term in ["bug", "fix", "error", "traceback", "broken", "not working"]):
+        return {"kind": "bugfix", "risk": "medium", "reason": "The request asks for a focused repair that should use search, range reads, patch, and verification."}
+    if any(term in lower for term in ["large", "huge", "100000", "100,000", "multi-file", "codebase"]):
+        return {"kind": "large-project", "risk": "high", "reason": "The request spans broad project context and should avoid whole-file rewrites."}
+    if any(term in lower for term in ["add", "implement", "build", "create", "generate", "feature"]):
+        return {"kind": "feature-build", "risk": "medium", "reason": "The request likely needs a file plan, new code, and verification."}
+    return {"kind": "project-question", "risk": "low", "reason": "The request appears to need project understanding before answering."}
+
+
+def _query_file_score(item: dict[str, object], terms: set[str]) -> int:
+    haystack = " ".join(
+        [
+            str(item.get("path") or ""),
+            _split_identifier(str(item.get("path") or "")),
+            str(item.get("role") or ""),
+            str(item.get("language") or ""),
+            str(item.get("summary") or ""),
+            " ".join(str(value) for value in item.get("symbols") or []),
+            " ".join(_split_identifier(str(value)) for value in item.get("symbols") or []),
+            " ".join(str(value) for value in item.get("imports") or []),
+        ]
+    )
+    item_terms = set(_terms(haystack))
+    score = len(terms & item_terms) * 6
+    score += _importance_score(item)
+    if item.get("large"):
+        score += 4
+    return score
+
+
+def _read_plan_for_files(files: list[dict[str, object]], query: str) -> list[dict[str, object]]:
+    plan: list[dict[str, object]] = []
+    reason = "likely relevant to the request"
+    if any(term in query.lower() for term in ["bug", "fix", "error", "traceback"]):
+        reason = "inspect exact code before making a focused repair"
+    for item in files[:12]:
+        path = str(item.get("path") or "")
+        if not path:
+            continue
+        lines = int(item.get("lines") or 0)
+        if item.get("large") or lines > 500:
+            start, end = 1, min(lines or 200, 220)
+            tool = "read_file_range"
+        else:
+            start, end = 1, min(lines or 200, 260)
+            tool = "read_file" if lines and lines <= 260 else "read_file_range"
+        plan.append({"path": path, "tool": tool, "start_line": start, "end_line": end, "reason": reason})
+    return plan
+
+
+def _edit_strategy(query: str, likely_files: list[dict[str, object]], large_files: list[dict[str, object]]) -> list[str]:
+    strategy = [
+        "Inspect project understanding and read-plan files before editing.",
+        "Use search_files or semantic_search to confirm the exact symbol/error location.",
+    ]
+    if large_files:
+        strategy.append("For large files, use read_file_range and replace_in_file; do not load or rewrite the whole file.")
+    if likely_files:
+        strategy.append("Patch the smallest confirmed block in the highest-confidence file first, then verify.")
+    if any(term in query.lower() for term in ["build", "create", "implement", "feature", "add"]):
+        strategy.append("For new features, create a thin vertical slice and add tests or smoke checks before broad polish.")
+    return strategy
+
+
+def _verification_commands_for_project(records: list[dict[str, object]]) -> list[str]:
+    paths = {str(item.get("path") or "").lower() for item in records}
+    commands: list[str] = []
+    if "package.json" in paths or any(path.endswith("/package.json") for path in paths):
+        commands.extend(["npm run build", "npm test"])
+    if "requirements.txt" in paths or any(path.endswith("/requirements.txt") for path in paths):
+        commands.append("python -m pytest -q")
+    if any(path.endswith(".py") for path in paths):
+        commands.append("python -m py_compile <changed_file.py>")
+    if any(path.endswith(".html") for path in paths):
+        commands.append("Open the generated/changed HTML page in the preview server")
+    if not commands:
+        commands.append("Run the smallest command that exercises the changed file")
+    deduped: list[str] = []
+    for command in commands:
+        if command not in deduped:
+            deduped.append(command)
+    return deduped
+
+
+
+def _split_identifier(name: str) -> str:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name or "")
+    return spaced.replace("_", " ").replace("-", " ").replace("/", " ").replace(".", " ")
+
 def _event_summary(event: dict[str, Any]) -> str:
     kind = event.get("type")
     if kind == "user_message":
@@ -596,3 +763,5 @@ def _line_number(starts: list[int], offset: int) -> int:
 
 def _terms(text: str) -> list[str]:
     return [term.lower() for term in re.findall(r"[a-zA-Z0-9_]{2,}", text)]
+
+

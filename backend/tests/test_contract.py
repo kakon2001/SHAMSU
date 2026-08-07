@@ -1721,3 +1721,85 @@ def test_agent_context_includes_claude_like_workflow_for_build_requests(monkeypa
     assert "Claude-like task workflow" in packet
     assert "Build path" in packet
     assert "User request: build a student management project" in packet
+
+
+def test_project_understanding_report_guides_large_project_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import context_index
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(context_index.settings, "agent_workdir", str(workspace))
+    (workspace / "package.json").write_text('{"scripts":{"build":"vite build","test":"vitest"},"dependencies":{"react":"latest"}}', encoding="utf-8")
+    (workspace / "src").mkdir()
+    (workspace / "src" / "authService.ts").write_text("export function loginUser(email:string){ return email + '-token'; }\n", encoding="utf-8")
+    (workspace / "src" / "main.tsx").write_text("import { loginUser } from './authService';\nconsole.log(loginUser('a'));\n", encoding="utf-8")
+
+    report = context_index.project_understanding("fix login bug in auth service", limit=5)
+
+    assert report["task_profile"]["kind"] == "bugfix"
+    assert "react" in report["architecture"]["frameworks"]
+    likely_paths = {item["path"] for item in report["likely_files"]}
+    assert "src/authService.ts" in likely_paths
+    assert any(item["path"] == "src/authService.ts" for item in report["read_plan"])
+    assert "npm run build" in report["verification_commands"]
+
+
+def test_project_understanding_context_is_compact_and_actionable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import context_index
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(context_index.settings, "agent_workdir", str(workspace))
+    (workspace / "app.py").write_text("def create_order():\n    return 'ok'\n", encoding="utf-8")
+
+    context = context_index.project_understanding_context("fix order bug")
+
+    assert "Large-project understanding" in context
+    assert "Task profile: bugfix" in context
+    assert "Suggested read ranges" in context
+    assert "app.py" in context
+
+
+def test_agent_tool_exposes_project_understanding() -> None:
+    from app.agent import tools
+
+    tool_names = {schema["function"]["name"] for schema in tools.TOOL_SCHEMAS}
+
+    assert "project_understanding" in tool_names
+    assert "project_understanding" in tools.READ_ONLY_TOOLS
+    assert "architecture" in tools.project_understanding("explain this project")
+
+
+def test_context_understand_route_returns_read_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+    from app import context_index
+    from app.main import app
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(context_index.settings, "agent_workdir", str(workspace))
+    (workspace / "main.py").write_text("def main():\n    return 'hello'\n", encoding="utf-8")
+
+    result = TestClient(app).get("/api/context/understand", params={"query": "fix main bug"}).json()
+
+    assert result["task_profile"]["kind"] == "bugfix"
+    assert result["read_plan"]
+    assert result["likely_files"][0]["path"] == "main.py"
+
+
+def test_long_context_bundle_includes_project_understanding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import long_context
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(long_context.context_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(long_context.vector_index.settings, "history_db_path", str(tmp_path / "sessions.db"))
+    (workspace / "orders.py").write_text("def create_order():\n    return 'pending'\n", encoding="utf-8")
+
+    bundle = long_context.build_bundle("fix order creation bug", budget=5000, fast=True)
+
+    assert "understanding" in bundle
+    assert bundle["understanding"]["task_profile"]["kind"] == "bugfix"
+    assert "Project understanding" in bundle["context"]
+    assert "orders.py" in bundle["context"]
