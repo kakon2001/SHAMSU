@@ -23,6 +23,14 @@ class PreviewStartRequest(BaseModel):
     port: int = Field(default=9000, ge=1024, le=65535)
 
 
+class PreviewArtifact(BaseModel):
+    path: str
+    title: str
+    kind: str
+    bytes: int
+    url: str
+
+
 class PreviewState(BaseModel):
     running: bool
     managed: bool
@@ -30,6 +38,11 @@ class PreviewState(BaseModel):
     url: str
     path: str
     message: str
+
+
+@router.get("/artifacts", response_model=list[PreviewArtifact])
+async def preview_artifacts(port: int = 9000, limit: int = 50) -> list[PreviewArtifact]:
+    return _preview_artifacts(port=port, limit=limit)
 
 
 @router.get("/status", response_model=PreviewState)
@@ -144,3 +157,34 @@ def _creationflags() -> int:
         return subprocess.CREATE_NO_WINDOW
     return 0
 
+
+def _preview_artifacts(port: int = 9000, limit: int = 50) -> list[PreviewArtifact]:
+    artifacts: list[PreviewArtifact] = []
+    for file in sorted(settings.workdir_path.rglob("*.html"), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
+        if any(part in {"node_modules", ".git", "dist", "build", "venv", ".venv", "__pycache__"} for part in file.parts):
+            continue
+        try:
+            rel = file.relative_to(settings.workdir_path).as_posix()
+            title = _html_title(file) or file.stem.replace("_", " ").replace("-", " ").title()
+            artifacts.append(PreviewArtifact(path=rel, title=title, kind="html", bytes=file.stat().st_size, url=f"http://127.0.0.1:{port}/{rel}"))
+        except OSError:
+            continue
+        if len(artifacts) >= limit:
+            break
+    return artifacts
+
+
+def _html_title(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return ""
+    import re
+
+    match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        h1 = re.search(r"<h1[^>]*>(.*?)</h1>", text, flags=re.IGNORECASE | re.DOTALL)
+        match = h1
+    if not match:
+        return ""
+    return " ".join(re.sub(r"<[^>]+>", "", match.group(1)).split())[:100]

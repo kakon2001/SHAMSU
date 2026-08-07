@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import uuid
@@ -36,8 +36,8 @@ TEXT_EXTENSIONS = {
 async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]:
     raw_name = Path(file.filename or "uploaded-file").name
     suffix = Path(raw_name).suffix.lower()
-    if suffix != ".pdf" and suffix not in TEXT_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Only PDF and text/code files are supported")
+    if suffix not in {".pdf", ".docx"} and suffix not in TEXT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only PDF, DOCX, and text/code files are supported")
 
     data = await file.read()
     if not data:
@@ -47,6 +47,8 @@ async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]
 
     if suffix == ".pdf":
         text = _extract_pdf_text(data)
+    elif suffix == ".docx":
+        text = _extract_docx_text(data)
     else:
         text = _decode_text(data)
 
@@ -59,10 +61,14 @@ async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]
         "name": raw_name,
         "path": context_path,
         "chars": len(text),
-        "kind": "pdf" if suffix == ".pdf" else "text",
+        "words": len(re.findall(r"\S+", text)),
+        "lines": len(text.splitlines()),
+        "bytes": len(data),
+        "kind": "pdf" if suffix == ".pdf" else "docx" if suffix == ".docx" else "text",
         "extension": suffix.lstrip(".") or "text",
         "summary": _upload_summary(raw_name, text),
         "preview": _preview_text(text),
+        "suggested_prompts": _suggested_prompts(raw_name, suffix),
     }
 
 
@@ -113,6 +119,40 @@ def _extract_pdf_text(data: bytes) -> str:
     return "\n\n".join(pages)
 
 
+
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="DOCX support needs python-docx. Run: pip install -r requirements.txt",
+        ) from exc
+
+    document = Document(BytesIO(data))
+    paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+    table_lines: list[str] = []
+    for table_index, table in enumerate(document.tables, start=1):
+        table_lines.append(f"[Table {table_index}]")
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                table_lines.append(" | ".join(cells))
+    return "\n\n".join(paragraphs + table_lines)
+
+
+def _suggested_prompts(name: str, suffix: str) -> list[str]:
+    label = "this uploaded file"
+    if suffix == ".pdf":
+        label = "this uploaded PDF"
+    elif suffix == ".docx":
+        label = "this uploaded Word document"
+    return [
+        f"Summarize {label} and list the main requirements.",
+        f"Find action items and missing details in {label}.",
+        f"Use {label} as context and create a step-by-step build plan.",
+    ]
+
 def _upload_summary(name: str, text: str, max_chars: int = 180) -> str:
     first = " ".join(text.strip().split())
     if len(first) > max_chars:
@@ -125,3 +165,5 @@ def _preview_text(text: str, max_chars: int = 500) -> str:
     if len(compact) > max_chars:
         return compact[:max_chars].rstrip() + "..."
     return compact
+
+

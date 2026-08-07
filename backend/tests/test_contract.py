@@ -491,6 +491,25 @@ def test_preview_server_start_status_and_stop(test_env: dict[str, str], monkeypa
 
     stopped = asyncio.run(preview.stop_preview())
     assert stopped.message in {"Managed preview server stopped.", "No managed preview server was running."}
+
+
+def test_preview_artifacts_lists_recent_html_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import preview
+
+    workspace = tmp_path / "workspace"
+    app_dir = workspace / "generated_app"
+    app_dir.mkdir(parents=True)
+    (app_dir / "index.html").write_text("<html><head><title>Generated CRM</title></head><body><h1>Fallback</h1></body></html>", encoding="utf-8")
+    (workspace / "notes.txt").write_text("not previewable", encoding="utf-8")
+    monkeypatch.setattr(preview.settings, "agent_workdir", str(workspace))
+
+    artifacts = asyncio.run(preview.preview_artifacts(port=19191))
+
+    assert artifacts
+    assert artifacts[0].path == "generated_app/index.html"
+    assert artifacts[0].title == "Generated CRM"
+    assert artifacts[0].url == "http://127.0.0.1:19191/generated_app/index.html"
+
 def _write_and_verify_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str) -> tuple[Any, list[str], list[Any]]:
     from app.routes import tasks
 
@@ -816,11 +835,41 @@ def test_upload_returns_metadata_and_writes_context_file(tmp_path: Path, monkeyp
     assert result["name"] == "Faculty Notes.txt"
     assert result["kind"] == "text"
     assert result["extension"] == "txt"
+    assert result["words"] == 8
+    assert result["lines"] == 1
+    assert result["bytes"] == 60
+    assert result["suggested_prompts"][0].startswith("Summarize this uploaded file")
     assert "grading rubric" in result["summary"]
+    assert "demo requirements" in result["preview"]
     stored = workspace / str(result["path"])
     assert stored.exists()
     assert "Uploaded source: Faculty Notes.txt" in stored.read_text(encoding="utf-8")
 
+
+
+
+def test_upload_accepts_docx_and_extracts_paragraphs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("docx")
+    from docx import Document
+    from io import BytesIO
+    from starlette.datastructures import UploadFile
+    from app.routes import uploads
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(uploads.settings, "agent_workdir", str(workspace))
+    document = Document()
+    document.add_paragraph("OpenBazaar requires buyers, sellers, bids, and COD orders.")
+    buffer = BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+
+    result = asyncio.run(uploads.upload_context_file(UploadFile(filename="OpenBazaar PRD.docx", file=buffer)))
+
+    assert result["kind"] == "docx"
+    assert result["extension"] == "docx"
+    assert "Word document" in result["suggested_prompts"][0]
+    assert "COD orders" in result["preview"]
 
 def test_attached_upload_context_is_prioritized_over_workspace_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.agent.loop import AgentSession
@@ -1864,4 +1913,10 @@ def test_conversation_memory_respects_small_budget() -> None:
 
     assert len(memory) <= 310
     assert "conversation memory truncated" in memory or "dashboard" in memory
+
+
+
+
+
+
 
