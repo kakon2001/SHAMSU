@@ -70,6 +70,16 @@ class VerificationRunRequest(BaseModel):
     run: bool = False
 
 
+class RepairSuggestion(BaseModel):
+    command: str
+    failure: str
+    likely_files: list[str]
+    likely_lines: list[int]
+    search_query: str
+    recommended_commands: list[str]
+    next_prompt: str
+
+
 class VerificationRunResponse(BaseModel):
     target: str
     run: bool
@@ -77,6 +87,7 @@ class VerificationRunResponse(BaseModel):
     results: list[VerificationCommandResult]
     ok: bool
     repair_feedback: list[str]
+    repair_plan: list[RepairSuggestion] = []
     next_steps: list[str]
 
 class EditWorkflowResponse(BaseModel):
@@ -136,6 +147,7 @@ def verify_project(body: VerificationRunRequest) -> VerificationRunResponse:
         for command in safe_commands:
             results.append(_run_verification_command(command, cwd))
     repair_feedback = [result.failure_summary for result in results if result.failure_summary]
+    repair_plan = _build_repair_plan(results)
     ok = bool(results) and all(result.ok for result in results) if body.run else False
     return VerificationRunResponse(
         target=target,
@@ -144,7 +156,8 @@ def verify_project(body: VerificationRunRequest) -> VerificationRunResponse:
         results=results,
         ok=ok,
         repair_feedback=repair_feedback,
-        next_steps=_verification_next_steps(body.run, results, safe_commands, commands),
+        repair_plan=repair_plan,
+        next_steps=_verification_next_steps(body.run, results, safe_commands, commands, repair_plan),
     )
 
 def _load_project_index(path: str) -> dict[str, Any]:
@@ -392,6 +405,84 @@ def _workspace_verification_commands() -> list[str]:
     return commands
 
 
+def _build_repair_plan(results: list[VerificationCommandResult]) -> list[RepairSuggestion]:
+    suggestions: list[RepairSuggestion] = []
+    for result in results:
+        if result.ok or not result.failure_summary:
+            continue
+        files = _likely_failure_files(result.output + "\n" + result.failure_summary)
+        lines = _likely_failure_lines(result.output + "\n" + result.failure_summary)
+        search_query = _failure_search_query(result.output + "\n" + result.failure_summary, files)
+        commands = _focused_recheck_commands(result.command, files)
+        file_text = ", ".join(files) if files else "the failing file"
+        suggestions.append(
+            RepairSuggestion(
+                command=result.command,
+                failure=result.failure_summary,
+                likely_files=files,
+                likely_lines=lines,
+                search_query=search_query,
+                recommended_commands=commands,
+                next_prompt=(
+                    f"Fix the failure from `{result.command}` in {file_text}. "
+                    f"Use project index/search, read the smallest relevant range, patch the exact block, "
+                    f"then rerun `{commands[0] if commands else result.command}`. Failure: {result.failure_summary}"
+                ),
+            )
+        )
+    return suggestions
+
+
+def _likely_failure_files(text: str) -> list[str]:
+    patterns = [
+        r'File "([^"]+?\.(?:py|js|ts|tsx|jsx|html|css|c|h))"',
+        r'([A-Za-z0-9_./\\-]+\.(?:py|js|ts|tsx|jsx|html|css|c|h))[:(]\d+',
+        r'([A-Za-z0-9_./\\-]+\.(?:py|js|ts|tsx|jsx|html|css|c|h))',
+    ]
+    seen: set[str] = set()
+    files: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            candidate = match.group(1).replace("\\", "/")
+            candidate = candidate.split("site-packages/")[-1]
+            if candidate and candidate not in seen and "venv/" not in candidate.lower():
+                seen.add(candidate)
+                files.append(candidate)
+            if len(files) >= 5:
+                return files
+    return files
+
+
+def _likely_failure_lines(text: str) -> list[int]:
+    lines: list[int] = []
+    for pattern in [r'line (\d+)', r'[:(](\d+)(?::\d+|,|\))']:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            value = int(match.group(1))
+            if value not in lines:
+                lines.append(value)
+            if len(lines) >= 5:
+                return lines
+    return lines
+
+
+def _failure_search_query(text: str, files: list[str]) -> str:
+    error_terms = re.findall(r"\b(?:AssertionError|SyntaxError|NameError|TypeError|ValueError|ImportError|ModuleNotFoundError|ReferenceError|failed|error|exception)\b", text, flags=re.IGNORECASE)
+    symbols = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", text)
+    ignored = {"failed", "error", "exception", "traceback", "file", "line", "returncode", "exit", "code", "python", "pytest"}
+    useful = [term for term in [*error_terms, *symbols] if term.lower() not in ignored]
+    base = [Path(item).name for item in files[:2]] + useful[:6]
+    return "|".join(dict.fromkeys(base))[:160]
+
+
+def _focused_recheck_commands(command: str, files: list[str]) -> list[str]:
+    commands = [command]
+    py_files = [file for file in files if file.endswith(".py")]
+    if py_files and not command.lower().startswith("python -m py_compile"):
+        commands.insert(0, f"python -m py_compile {py_files[0]}")
+    if any(file.endswith(('.ts', '.tsx', '.js', '.jsx', '.html', '.css')) for file in files) and "npm run build" not in commands:
+        commands.append("npm run build")
+    return commands[:3]
+
 def _verification_cwd(target: str) -> Path:
     backend_dir = Path(__file__).resolve().parents[2]
     if target == "backend":
@@ -461,7 +552,7 @@ def _summarize_failure(command: str, output: str, exit_code: int) -> str:
     return f"{command} failed with exit code {exit_code}. {excerpt[:900]}"
 
 
-def _verification_next_steps(run: bool, results: list[VerificationCommandResult], safe_commands: list[str], requested_commands: list[str]) -> list[str]:
+def _verification_next_steps(run: bool, results: list[VerificationCommandResult], safe_commands: list[str], requested_commands: list[str], repair_plan: list[RepairSuggestion] | None = None) -> list[str]:
     skipped = [command for command in requested_commands if command not in safe_commands]
     if not run:
         steps = ["Review the safe verification commands, then call this endpoint again with run=true after approval."]
@@ -469,12 +560,16 @@ def _verification_next_steps(run: bool, results: list[VerificationCommandResult]
         steps = ["All verification commands passed. Continue with the next requested change or final demo check."]
     else:
         steps = [
-            "Read repair_feedback and locate the failing file/range with /api/workflows/edit-plan.",
+            "Read repair_plan[0].next_prompt and use it as the next SHAMSU prompt.",
+            "Use repair_plan[0].search_query with /api/workflows/edit-plan to locate the failing range.",
             "Patch the smallest exact block with replace_in_file after approval.",
-            "Run /api/workflows/verify again to confirm the fix.",
+            "Run the recommended_commands from repair_plan again to confirm the fix.",
         ]
     if skipped:
         steps.append("Skipped unsupported verification command(s): " + ", ".join(skipped))
     return steps
+
+
+
 
 

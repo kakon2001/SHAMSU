@@ -145,7 +145,7 @@ async def run_task(body: TaskRunRequest) -> TaskRunResponse:
 
 
 def _build_reliability_report(steps: list[TaskRunStep], created_files: list[str], ok: bool) -> ReliabilityReport:
-    phase_order = ["plan", "generate", "validate", "write", "verify", "feedback", "repair", "repair-generate", "preview"]
+    phase_order = ["plan", "generate", "validate", "write", "verify", "feedback", "repair-plan", "repair", "repair-generate", "preview"]
     phases: list[str] = []
     for phase in phase_order:
         phase_steps = [step for step in steps if step.name == phase]
@@ -951,6 +951,7 @@ async def _verify_and_repair_loop(
             break
         feedback = _verification_feedback(created_files)
         steps.append(TaskRunStep(name="feedback", status="warning", detail="; ".join(feedback[:4]) or "Verification failed without detailed feedback."))
+        steps.append(TaskRunStep(name="repair-plan", status="ok", detail=_task_repair_plan_detail(prompt, created_files, feedback, attempt)))
 
         repaired_by_rule = _repair_created_files(created_files, steps)
         if repaired_by_rule:
@@ -975,6 +976,25 @@ async def _verify_and_repair_loop(
         verify_ok = _verify_created_files(plan, created_files, steps)
     return verify_ok, plan, created_files
 
+
+
+def _task_repair_plan_detail(prompt: str, created_files: list[str], feedback: list[str], attempt: int) -> str:
+    files = ", ".join(created_files[:5]) if created_files else "no files"
+    primary = feedback[0] if feedback else "verification failed without detailed output"
+    search_terms = _repair_search_terms(primary, created_files)
+    return (
+        f"Attempt {attempt}: inspect {files}; search `{search_terms}`; read the smallest failing range; "
+        f"patch only the confirmed block; rerun focused verification. Failure: {primary[:700]}"
+    )
+
+
+def _repair_search_terms(feedback: str, created_files: list[str]) -> str:
+    file_terms = [Path(path).name for path in created_files[:3]]
+    error_terms = re.findall(r"\b(?:SyntaxError|ReferenceError|TypeError|NameError|AssertionError|failed|error|braces|animation|missing|empty)\b", feedback, flags=re.IGNORECASE)
+    symbols = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", feedback)
+    ignored = {"failed", "error", "file", "line", "with", "without", "verification"}
+    useful = [term for term in [*file_terms, *error_terms, *symbols] if term.lower() not in ignored]
+    return "|".join(dict.fromkeys(useful[:8])) or "verification failure"
 
 async def _generate_json_repair_plan(
     prompt: str,
@@ -4038,6 +4058,8 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
+
 
 
 

@@ -289,6 +289,28 @@ def test_large_file_edit_workflow_handles_no_match(backend_server: None) -> None
     assert "Indexed" in result["index_summary"]
     assert result["next_steps"]
 
+
+def test_repair_plan_helpers_extract_files_lines_and_query() -> None:
+    from app.routes import workflows
+
+    result = workflows.VerificationCommandResult(
+        command="python -m pytest -q",
+        cwd="workspace",
+        ok=False,
+        exit_code=1,
+        output='File "app/auth.py", line 42, in login_user\nAssertionError: token mismatch',
+        failure_summary='python -m pytest -q failed with exit code 1. AssertionError: token mismatch in app/auth.py:42',
+    )
+
+    plan = workflows._build_repair_plan([result])
+
+    assert plan[0].likely_files == ["app/auth.py"]
+    assert 42 in plan[0].likely_lines
+    assert "auth.py" in plan[0].search_query
+    assert "next SHAMSU prompt" not in plan[0].next_prompt
+    assert "Fix the failure" in plan[0].next_prompt
+
+
 def test_verification_workflow_dry_run_filters_commands(backend_server: None) -> None:
     result = request(
         "POST",
@@ -1913,6 +1935,8 @@ def test_conversation_memory_respects_small_budget() -> None:
 
     assert len(memory) <= 310
     assert "conversation memory truncated" in memory or "dashboard" in memory
+
+
 
 
 
