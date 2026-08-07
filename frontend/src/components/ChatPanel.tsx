@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type FormEvent } from "react";
+﻿import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { uploadContextFile } from "../api/client";
 import type { ChatItem, UploadedContextFile } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -16,6 +16,12 @@ interface Props {
   onUploaded?: () => void;
 }
 
+
+const STARTER_PROMPTS = [
+  "Read my uploaded PRD and summarize the build plan.",
+  "Create a multi-file web app and verify it.",
+  "Find bugs in the current workspace and suggest fixes.",
+];
 
 function promptPreview(text: string): string {
   const compact = text.replace(/\s+/g, " ").trim();
@@ -44,6 +50,7 @@ export function ChatPanel({
   const [filter, setFilter] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ kind: "success" | "error"; text: string; file?: UploadedContextFile } | null>(null);
+  const [showPromptTracker, setShowPromptTracker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -64,14 +71,25 @@ export function ChatPanel({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [pickerOpen]);
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  function submitPrompt() {
     const text = input.trim();
     if (!text || busy || !connected) return;
     onSend(text, attached, attachmentLabels);
     setInput("");
     setAttached([]);
     setAttachmentLabels({});
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    submitPrompt();
+  }
+
+  function handleInputKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitPrompt();
+    }
   }
 
   function attach(path: string) {
@@ -121,8 +139,8 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
-      <details className="activity-history">
-        <summary><span>Prompt tracker</span><small>recent prompts</small></summary>
+      <details className="activity-history" open={showPromptTracker} onToggle={(event) => setShowPromptTracker(event.currentTarget.open)}>
+        <summary><span>Prompt history</span><small>{latestPromptNumber ? `${latestPromptNumber} prompts` : "recent prompts"}</small></summary>
         <div className="activity-history__list">
           {recentActivity.length === 0 && <div className="activity-history__empty">No activity yet.</div>}
           {recentActivity.map((item) => {
@@ -141,8 +159,15 @@ export function ChatPanel({
       <div className="chat-panel__messages" ref={scrollRef}>
         {items.length === 0 && (
           <div className="chat-panel__empty">
-            Ask the agent to explore, edit or run something in the workspace. Every shell command and
-            file edit will wait for your approval here.
+            <strong>What should SHAMSU build or inspect?</strong>
+            <span>Upload a file, attach workspace context, or ask for a build plan.</span>
+            <div className="chat-panel__starters">
+              {STARTER_PROMPTS.map((prompt) => (
+                <button key={prompt} type="button" onClick={() => setInput(prompt)} disabled={!connected || busy}>
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {items.map((item) => {
@@ -172,7 +197,7 @@ export function ChatPanel({
               );
           }
         })}
-        {busy && !hasPendingApproval && <div className="chat-panel__typing">Agent is working...</div>}
+        {busy && !hasPendingApproval && <div className="chat-panel__typing"><span />SHAMSU is working...</div>}
         {hasPendingApproval && (
           <div className="chat-panel__waiting">Waiting for your approval above</div>
         )}
@@ -291,11 +316,13 @@ export function ChatPanel({
           accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.yaml,.yml,.log"
           onChange={(e) => void handleUpload(e.target.files?.[0])}
         />
-        <input
+        <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={connected ? "Ask the agent to do something..." : "Connecting to backend..."}
+          onKeyDown={handleInputKeyDown}
+          placeholder={connected ? "Message SHAMSU..." : "Connecting to backend..."}
           disabled={!connected || busy}
+          rows={1}
         />
         {busy ? (
           <button type="button" className="btn btn--stop" onClick={onStop}>
@@ -310,6 +337,8 @@ export function ChatPanel({
     </div>
   );
 }
+
+
 
 
 

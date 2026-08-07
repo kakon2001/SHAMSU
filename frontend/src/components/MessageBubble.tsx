@@ -15,7 +15,7 @@ function attachmentLabel(path: string, labels?: Record<string, string>): string 
 export function MessageBubble({ role, content, files, fileLabels, badge }: Props) {
   return (
     <div className={`message message--${role}`}>
-      <div className="message__role">{role === "user" ? "You" : "Agent"}{badge && <span className="message__badge">{badge}</span>}</div>
+      <div className="message__role">{role === "user" ? "You" : "SHAMSU"}{badge && <span className="message__badge">{badge}</span>}</div>
       {files && files.length > 0 && (
         <div className="message__files">
           {files.map((path) => (
@@ -29,5 +29,6 @@ export function MessageBubble({ role, content, files, fileLabels, badge }: Props
     </div>
   );
 }
+
 
 
