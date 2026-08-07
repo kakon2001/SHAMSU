@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -1803,3 +1803,65 @@ def test_long_context_bundle_includes_project_understanding(tmp_path: Path, monk
     assert bundle["understanding"]["task_profile"]["kind"] == "bugfix"
     assert "Project understanding" in bundle["context"]
     assert "orders.py" in bundle["context"]
+
+
+def test_conversation_memory_snapshot_groups_relevant_recent_and_files() -> None:
+    from app import context_index
+
+    events = [
+        {"type": "user_message", "content": "build login dashboard"},
+        {"type": "tool_call", "name": "read_file", "args": {"path": "auth.py"}},
+        {"type": "approval_request", "name": "write_file", "path": "auth.py"},
+        {"type": "approval_resolved", "approved": True},
+        {"type": "files_changed", "paths": ["auth.py"]},
+        {"type": "tool_result", "name": "run_shell", "ok": False, "preview": "login test failed"},
+        {"type": "error", "message": "Login token mismatch"},
+        {"type": "assistant_message", "content": "I will repair the login token check."},
+    ]
+
+    snapshot = context_index.conversation_memory_snapshot(events, "fix login token", budget=1200)
+
+    assert "auth.py" in snapshot["files_touched"]
+    assert any("login" in item.lower() for item in snapshot["relevant"] + snapshot["recent"])
+    assert any("Tool result: run_shell failed" in item for item in snapshot["recent"] + snapshot["relevant"])
+
+
+def test_conversation_memory_formats_smooth_sections_and_dedupes() -> None:
+    from app import context_index
+
+    events = [
+        {"type": "user_message", "content": "create OpenBazaar shell"},
+        {"type": "user_message", "content": "create OpenBazaar shell"},
+        {"type": "approval_request", "name": "write_file", "path": "openbazaar_marketplace/index.html"},
+        {"type": "approval_resolved", "approved": True},
+        {"type": "files_changed", "paths": ["openbazaar_marketplace/index.html"]},
+        {"type": "tool_result", "name": "write_file", "ok": True, "preview": "Wrote index.html"},
+        {"type": "assistant_message", "content": "Created the shell."},
+    ]
+
+    memory = context_index.conversation_memory(events, "continue OpenBazaar index work", budget=1200)
+
+    assert "Relevant earlier context" in memory
+    assert "Files touched this session" in memory
+    assert "Recent continuity" in memory
+    assert memory.count("User asked: create OpenBazaar shell") == 1
+    assert "openbazaar_marketplace/index.html" in memory
+
+
+def test_conversation_memory_respects_small_budget() -> None:
+    from app import context_index
+
+    events = [
+        {"type": "user_message", "content": f"important previous prompt {index} about login and dashboard"}
+        for index in range(20)
+    ]
+    events.extend([
+        {"type": "approval_request", "name": "write_file", "path": "dashboard.py"},
+        {"type": "files_changed", "paths": ["dashboard.py"]},
+    ])
+
+    memory = context_index.conversation_memory(events, "login dashboard", budget=260)
+
+    assert len(memory) <= 310
+    assert "conversation memory truncated" in memory or "dashboard" in memory
+

@@ -202,41 +202,115 @@ def automatic_summary_context(query: str, budget: int = SUMMARY_CONTEXT_CHARS) -
 
 
 def conversation_memory(events: list[dict[str, Any]], current_query: str = "", budget: int = CONVERSATION_MEMORY_CHARS) -> str:
-    """Build a compact memory block from earlier prompts, actions, and results."""
-    if len(events) < 8:
-        return ""
+    """Build a smooth, categorized memory block from previous session events.
+
+    Instead of replaying the transcript, keep the facts that help the next turn:
+    earlier goals, files touched, approvals/results, blockers, and the latest few
+    actions. This gives small local models Claude-like continuity without flooding
+    the context window.
+    """
+    snapshot = conversation_memory_snapshot(events, current_query, budget=budget)
+    sections: list[str] = []
+    emitted: set[str] = set()
+    relevant = _section_unique(snapshot["relevant"], emitted)
+    files_touched = _section_unique(snapshot["files_touched"], emitted)
+    recent = _section_unique(snapshot["recent"], emitted)
+    if relevant:
+        sections.append("Relevant earlier context:\n" + "\n".join(f"- {item}" for item in relevant))
+    if files_touched:
+        sections.append("Files touched this session:\n" + "\n".join(f"- {item}" for item in files_touched))
+    if recent:
+        sections.append("Recent continuity:\n" + "\n".join(f"- {item}" for item in recent))
+    result = "\n\n".join(sections)
+    if len(result) > budget:
+        result = result[:budget].rstrip() + "\n... [conversation memory truncated]"
+    return result
+
+
+def conversation_memory_snapshot(events: list[dict[str, Any]], current_query: str = "", budget: int = CONVERSATION_MEMORY_CHARS) -> dict[str, list[str]]:
+    if len(events) < 4:
+        return {"relevant": [], "recent": [], "files_touched": []}
     terms = set(_terms(current_query))
-    entries: list[tuple[int, str]] = []
-    for event in events:
-        kind = str(event.get("type") or "")
+    scored: list[tuple[int, int, str]] = []
+    recent_candidates: list[str] = []
+    touched: list[str] = []
+    for index, event in enumerate(events):
         text = _event_summary(event)
         if not text:
             continue
-        score = 1
-        if kind in {"user_message", "approval_request", "approval_resolved", "files_changed", "error"}:
-            score += 2
-        score += len(terms & set(_terms(text)))
-        entries.append((score, text))
+        kind = str(event.get("type") or "")
+        score = _memory_event_weight(kind) + len(terms & set(_terms(text))) * 4 + min(index, 40) // 10
+        scored.append((score, index, text))
+        if kind in {"user_message", "assistant_message", "tool_result", "error", "files_changed"}:
+            recent_candidates.append(text)
+        if kind == "files_changed":
+            for path in event.get("paths") or []:
+                path_text = str(path)
+                if path_text and path_text not in touched:
+                    touched.append(path_text)
+        elif kind == "approval_request" and event.get("path"):
+            path_text = str(event.get("path"))
+            if path_text not in touched:
+                touched.append(path_text)
 
-    if not entries:
-        return ""
-    # Keep high-signal older facts plus the latest events so long sessions remain coherent.
-    selected = [text for _, text in sorted(entries, key=lambda item: item[0], reverse=True)[:8]]
-    recent = [text for _, text in entries[-8:]]
-    merged: list[str] = []
-    for text in selected + recent:
-        if text not in merged:
-            merged.append(text)
+    recent = _dedupe_memory_items(recent_candidates[-8:])[-6:]
+    recent_keys = {" ".join(item.split()).lower() for item in recent}
+    relevant_pool = _dedupe_memory_items([text for _, _, text in sorted(scored, key=lambda item: (-item[0], -item[1]))])
+    relevant = [item for item in relevant_pool if " ".join(item.split()).lower() not in recent_keys][:8]
+    if not relevant:
+        relevant = relevant_pool[: min(2, len(relevant_pool))]
+    files_touched = touched[-10:]
+    return _fit_memory_snapshot({"relevant": relevant, "recent": recent, "files_touched": files_touched}, budget)
 
-    lines: list[str] = []
+
+
+def _section_unique(items: list[str], emitted: set[str]) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        key = " ".join(item.split()).lower()
+        if key in emitted:
+            continue
+        emitted.add(key)
+        result.append(item)
+    return result
+def _memory_event_weight(kind: str) -> int:
+    weights = {
+        "user_message": 9,
+        "files_changed": 9,
+        "error": 9,
+        "approval_request": 7,
+        "approval_resolved": 6,
+        "tool_result": 5,
+        "assistant_message": 4,
+        "tool_call": 3,
+    }
+    return weights.get(kind, 1)
+
+
+def _dedupe_memory_items(items: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        compact = " ".join(item.split())
+        key = compact.lower()
+        if not compact or key in seen:
+            continue
+        seen.add(key)
+        result.append(compact)
+    return result
+
+
+def _fit_memory_snapshot(snapshot: dict[str, list[str]], budget: int) -> dict[str, list[str]]:
+    fitted = {"relevant": [], "recent": [], "files_touched": []}
     used = 0
-    for text in merged:
-        line = f"- {text}"
-        if used + len(line) + 1 > budget:
-            break
-        lines.append(line)
-        used += len(line) + 1
-    return "\n".join(lines)
+    for key in ["relevant", "files_touched", "recent"]:
+        for item in snapshot[key]:
+            cost = len(item) + 4
+            if used + cost > budget:
+                break
+            fitted[key].append(item)
+            used += cost
+    return fitted
 
 
 def format_context_results(query: str, limit: int = 5) -> str:
@@ -701,6 +775,9 @@ def _event_summary(event: dict[str, Any]) -> str:
         return "Assistant answered: " + _short(str(event.get("content") or ""), 180)
     if kind == "tool_call":
         return f"Tool used: {event.get('name')} {_short(str(event.get('args') or ''), 140)}"
+    if kind == "tool_result":
+        status = "ok" if event.get("ok") else "failed"
+        return f"Tool result: {event.get('name')} {status}: {_short(str(event.get('preview') or ''), 180)}"
     if kind == "approval_request":
         target = event.get("path") or event.get("command") or ""
         return f"Approval requested for {event.get('name')}: {_short(str(target), 180)}"
@@ -763,5 +840,10 @@ def _line_number(starts: list[int], offset: int) -> int:
 
 def _terms(text: str) -> list[str]:
     return [term.lower() for term in re.findall(r"[a-zA-Z0-9_]{2,}", text)]
+
+
+
+
+
 
 
