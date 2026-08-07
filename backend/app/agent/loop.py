@@ -1,4 +1,4 @@
-"""HTTP-driven agent sessions.
+﻿"""HTTP-driven agent sessions.
 
 Each AgentSession (one per chat session, managed by session_manager) runs
 turns as background asyncio tasks and records everything that happens as an
@@ -370,6 +370,9 @@ class AgentSession:
             blocks.append(f"--- {source_kind}: {label} ({path}) ---\n{content}")
 
         parts = [query_policy.format_policy_context(policy)]
+        workflow_brief = _tool_workflow_brief(user_message, policy, context_files)
+        if workflow_brief:
+            parts.append(workflow_brief)
         if web_context:
             parts.append(
                 "Public web search context for current/external facts. Use the source URLs when answering and say if search failed:\n\n"
@@ -728,6 +731,49 @@ class AgentSession:
 
 
 
+
+def _tool_workflow_brief(user_message: str, policy: query_policy.QueryPolicy, context_files: list[str]) -> str:
+    """Return explicit Claude-like operating instructions for the current turn.
+
+    Small local models are less reliable at spontaneously choosing the right tool
+    sequence. This compact brief makes the intended workflow visible to the model
+    without exposing hidden reasoning or forcing tools for simple explanation turns.
+    """
+    if not policy.enable_tools:
+        return ""
+    lower = user_message.lower()
+    lines = [
+        "Claude-like task workflow for this turn:",
+        "- Start by naming the requirement and the file/tool plan in one short paragraph.",
+    ]
+    if policy.use_uploaded_context or context_files:
+        lines.append("- Use uploaded/attached context as the first source of truth before workspace assumptions.")
+    if any(term in lower for term in ["bug", "fix", "error", "traceback", "broken", "not working", "issue"]):
+        lines.extend(
+            [
+                "- Debug path: inspect project_map/project_index, search the error or symbol, read only relevant ranges, patch the smallest exact block, then verify.",
+                "- Do not rewrite unrelated files while fixing one bug.",
+            ]
+        )
+    elif any(term in lower for term in ["large file", "huge file", "100000", "100,000", "big project", "multi-file", "codebase"]):
+        lines.extend(
+            [
+                "- Large-project path: use project_index, semantic_search, and read_file_range; avoid reading or rewriting huge whole files.",
+                "- Build a patch plan from file ranges, then edit only confirmed blocks.",
+            ]
+        )
+    elif any(term in lower for term in ["make", "build", "create", "generate", "implement", "develop", "add"]):
+        lines.extend(
+            [
+                "- Build path: analyze requirements, choose a simple stack, show a file plan, create files with write_file/replace_in_file approvals, then verify and preview if applicable.",
+                "- For multi-file apps, create a runnable vertical slice first, then improve feature-by-feature.",
+            ]
+        )
+    if policy.use_web_search:
+        lines.append("- Web/current path: use web_search and include useful source URLs in the final answer.")
+    lines.append("- After any successful file edit, run a relevant verification command or explain exactly why verification is not available.")
+    lines.append("- If verification fails, inspect the failure output, repair, and verify again before final response.")
+    return "\n".join(lines)
 def _verification_supervisor_message(repair_pending: bool) -> str:
     if repair_pending:
         return (
@@ -791,3 +837,4 @@ def _attachment_label(path: str) -> str:
         if len(parts) == 4:
             return parts[3].removesuffix(".txt")
     return name
+

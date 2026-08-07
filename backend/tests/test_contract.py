@@ -1673,3 +1673,51 @@ def test_openbazaar_spaced_name_prompt_routes_to_staged_build() -> None:
 
     assert plan.mode == "openbazaar-staged-prd-build-step-05"
     assert [item["path"] for item in plan.suggested_files] == ["openbazaar_marketplace/src/data.js"]
+
+
+def test_tool_workflow_brief_guides_build_bugfix_and_large_file_paths() -> None:
+    from app.agent.loop import _tool_workflow_brief
+    from app import query_policy
+
+    build_policy = query_policy.classify_query("build a CRM project", [])
+    build_brief = _tool_workflow_brief("build a CRM project", build_policy, [])
+    assert "Build path" in build_brief
+    assert "file plan" in build_brief
+    assert "verify" in build_brief.lower()
+
+    bug_policy = query_policy.classify_query("fix the login traceback in this project", [])
+    bug_brief = _tool_workflow_brief("fix the login traceback in this project", bug_policy, [])
+    assert "Debug path" in bug_brief
+    assert "read only relevant ranges" in bug_brief
+    assert "smallest exact block" in bug_brief
+
+    large_policy = query_policy.classify_query("fix a bug in a 100000 line large file", [])
+    large_brief = _tool_workflow_brief("fix a bug in a 100000 line large file", large_policy, [])
+    assert "Large-project path" in large_brief or "Debug path" in large_brief
+    assert "read_file_range" in large_brief or "relevant ranges" in large_brief
+
+
+def test_tool_workflow_brief_stays_off_for_general_teaching_questions() -> None:
+    from app.agent.loop import _tool_workflow_brief
+    from app import query_policy
+
+    policy = query_policy.classify_query("explain software engineering simply", [])
+
+    assert _tool_workflow_brief("explain software engineering simply", policy, []) == ""
+
+
+def test_agent_context_includes_claude_like_workflow_for_build_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.loop import AgentSession
+    from app.agent import loop
+
+    monkeypatch.setattr(loop.tools, "long_context_bundle", lambda query: "Project memory")
+    monkeypatch.setattr(loop.context_index, "automatic_context", lambda query: "")
+    monkeypatch.setattr(loop.context_index, "automatic_summary_context", lambda query: "")
+    monkeypatch.setattr(loop.context_index, "project_map_context", lambda query: "")
+    monkeypatch.setattr(loop.context_index, "conversation_memory", lambda events, query: "")
+
+    packet = AgentSession(title="workflow brief test")._with_file_context("build a student management project", [])
+
+    assert "Claude-like task workflow" in packet
+    assert "Build path" in packet
+    assert "User request: build a student management project" in packet
