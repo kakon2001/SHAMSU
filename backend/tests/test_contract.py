@@ -1655,3 +1655,21 @@ def test_toy_os_run_writes_and_verifies_files(tmp_path: Path, monkeypatch: pytes
     assert (workspace / "shamsu_os" / "kernel.c").exists()
     assert "Welcome to SHAMSU OS" in (workspace / "shamsu_os" / "kernel.c").read_text(encoding="utf-8")
     assert any(step.name == "verify" and step.status == "ok" for step in result.steps)
+
+
+def test_openbazaar_web_typo_prompt_routes_to_staged_build() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("OpenBazzar step 4 create index.html from the PRD")
+
+    assert plan.mode == "openbazaar-staged-prd-build-step-04"
+    assert [item["path"] for item in plan.suggested_files] == ["openbazaar_marketplace/index.html"]
+
+
+def test_openbazaar_spaced_name_prompt_routes_to_staged_build() -> None:
+    from app.routes import tasks
+
+    plan = tasks.build_plan("Open Bazaar step 5 add seed data")
+
+    assert plan.mode == "openbazaar-staged-prd-build-step-05"
+    assert [item["path"] for item in plan.suggested_files] == ["openbazaar_marketplace/src/data.js"]

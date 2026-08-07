@@ -44,6 +44,19 @@ function flattenFiles(node: FileNode | null): string[] {
   return (node.children ?? []).flatMap(flattenFiles);
 }
 
+function normalizeBuildText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .replace(/openbazzar/g, "openbazaar")
+    .replace(/openbazar/g, "openbazaar");
+}
+
+function looksLikeOpenBazaarPrompt(text: string): boolean {
+  const lower = text.toLowerCase();
+  const compact = normalizeBuildText(text);
+  return compact.includes("openbazaar") || (lower.includes("marketplace") && /\b(cod|cash on delivery|auction|seller dashboard|buyer dashboard)\b/.test(lower));
+}
 function App() {
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [tabs, setTabs] = useState<EditorTab[]>([]);
@@ -430,9 +443,11 @@ function App() {
   const orderedChatItems = [...items, ...autoBuildItems].sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0));
   const sendOrBuild = useCallback((text: string, contextFiles: string[], contextFileLabels: Record<string, string> = {}) => {
     const lower = text.toLowerCase();
-    const isOpenBazaarStep = /\bopenbazaar\b/.test(lower) && /\b(step|stage|phase|prompt)\s*#?\s*\d{1,2}\b/.test(lower);
-    const isOpenBazaarBuild = /\bopenbazaar\b/.test(lower) && /\b(build|create|generate|implement|project)\b/.test(lower);
-    const shouldAutoBuild = isOpenBazaarStep || isOpenBazaarBuild || (contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower));
+    const openBazaarPrompt = looksLikeOpenBazaarPrompt(text);
+    const isOpenBazaarStep = openBazaarPrompt && /\b(step|stage|phase|prompt)\s*#?\s*\d{1,2}\b/.test(lower);
+    const isOpenBazaarBuild = openBazaarPrompt && /\b(build|create|generate|implement|project|add|make|write)\b/.test(lower);
+    const isGenericBuild = contextFiles.length === 0 && /\b(make|build|create|generate|develop|implement|write)\b/.test(lower) && /\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b/.test(lower);
+    const shouldAutoBuild = isOpenBazaarStep || isOpenBazaarBuild || isGenericBuild;
     if (shouldAutoBuild) {
       runAutoBuild(text);
       return;
@@ -937,39 +952,4 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

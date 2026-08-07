@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -668,9 +668,17 @@ def _openbazaar_dispatch_plan(prompt: str) -> TaskPlanResponse:
     if any(term in lower for term in ["all at once", "emergency full", "generate everything now", "single prompt full build"]):
         return _openbazaar_marketplace_plan(prompt)
     return _openbazaar_staged_roadmap_plan(prompt)
+
+
+def _normalise_openbazaar_text(text: str) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "", text.lower())
+    return compact.replace("openbazzar", "openbazaar").replace("openbazar", "openbazaar")
+
+
 def _looks_like_openbazaar_marketplace(lower: str) -> bool:
-    marketplace_terms = ["openbazaar", "marketplace", "cash on delivery", "cod", "auction", "seller dashboard", "buyer dashboard"]
-    return ("openbazaar" in lower) or ("marketplace" in lower and any(term in lower for term in marketplace_terms[2:]))
+    normalized = _normalise_openbazaar_text(lower)
+    marketplace_terms = ["cash on delivery", "cod", "auction", "seller dashboard", "buyer dashboard"]
+    return "openbazaar" in normalized or ("marketplace" in lower and any(term in lower for term in marketplace_terms))
 
 def _with_advisory(plan: TaskPlanResponse, prompt: str) -> TaskPlanResponse:
     """Fill Claude-like guidance fields for every autonomous build plan."""
@@ -4030,6 +4038,7 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
 
 
 
