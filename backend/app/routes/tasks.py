@@ -191,6 +191,8 @@ def build_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if _looks_like_openbazaar_marketplace(lower):
         return _openbazaar_dispatch_plan(prompt)
+    if _looks_like_enterprise_prd_request(lower):
+        return _enterprise_prd_plan(prompt)
     if _looks_like_operating_system_request(lower):
         return _toy_os_plan(prompt)
     if any(word in lower for word in ["large file", "100000", "100,000", "huge file"]):
@@ -234,6 +236,73 @@ def build_plan(prompt: str) -> TaskPlanResponse:
 
 
 
+
+def _looks_like_enterprise_prd_request(lower: str) -> bool:
+    complex_terms = [
+        "enterprise", "multi-service", "microservice", "microservices", "payment gateway",
+        "real otp", "sms otp", "courier", "cloud deployment", "production deployment",
+        "large prd", "complex prd", "multi step", "multi-step", "backend business logic",
+    ]
+    prd_build = "prd" in lower and any(action in lower for action in ["build", "make", "develop", "implement", "generate", "create"])
+    integration_heavy = any(term in lower for term in ["payment", "otp", "courier", "deployment", "multi-service", "microservice"])
+    return any(term in lower for term in complex_terms) or (prd_build and integration_heavy)
+
+
+def _enterprise_prd_plan(prompt: str) -> TaskPlanResponse:
+    base = "enterprise_prd_project"
+    readme = f"""# Enterprise PRD Build Mode\n\nPrompt: {prompt}\n\nSHAMSU selected Enterprise PRD Mode because the request needs more than a single-page prototype. This mode breaks large PRDs into service boundaries, business rules, integration adapters, verification checks, and staged implementation prompts.\n"""
+    architecture = """# Architecture\n\n## Service Boundaries\n- Frontend web app: pages, forms, dashboards, and role-based navigation.\n- Backend API: authentication, authorization, core domain routes, validation, and audit events.\n- Database: normalized SQL schema, migrations, seed data, and reporting views.\n- Integration adapters: payment, OTP, courier, email/SMS, storage, and deployment hooks.\n- Verification: unit tests for rules, API smoke tests, and generated-project acceptance checks.\n\n## Production Path\nUse Docker/MySQL locally, then place HTTPS/TLS, reverse proxy, secrets management, monitoring, and backups around the backend.\n"""
+    services = """# Services\n\n1. Identity service: users, sessions, roles, password policy, rate limiting.\n2. Domain service: PRD-specific entities and business workflows.\n3. Integration service: provider-neutral adapters for payment, OTP, courier, and storage.\n4. Admin/audit service: moderation, logs, reports, and issue tracking.\n5. Preview/deployment service: local preview first, cloud deployment only after tests pass.\n"""
+    integrations = """# Integration Adapters\n\nSHAMSU cannot call real providers without credentials, so it generates provider-neutral adapter contracts first. Real providers can later replace the demo adapters without changing business logic.\n\nRequired adapters:\n- PaymentGateway: create payment intent, verify callback, handle refund.\n- OtpProvider: send OTP, verify OTP, expire OTP.\n- CourierProvider: create shipment, update delivery status, calculate delivery fee.\n- DeploymentProvider: build, preview deploy, production deploy, read logs.\n"""
+    business_rules = """# Business Rule Verification\n\nFor every PRD rule, SHAMSU should create a testable rule statement:\n- Given initial state\n- When user action happens\n- Then expected state/result must occur\n\nExamples:\n- Invalid OTP cancels order.\n- Lowest valid bid equals current bid plus increment.\n- User without role permission cannot access protected action.\n- Payment/courier callbacks must be idempotent.\n"""
+    roadmap = """# Long Multi-Step Roadmap\n\nUse these prompts one by one:\n1. Extract roles, entities, workflows, integrations, and risks from the PRD. Do not create files yet.\n2. Create service boundaries and database schema plan.\n3. Create frontend route/page plan and UX acceptance criteria.\n4. Create backend API contract and business rule table.\n5. Generate integration adapter interfaces for payment, OTP, courier, storage, and deployment.\n6. Build the first vertical slice with frontend, API, database, and tests.\n7. Run verification and repair failures.\n8. Continue one workflow at a time until the PRD coverage checklist is complete.\n"""
+    payment_adapter = '''class PaymentGateway:\n    def create_payment_intent(self, order_id: str, amount: float) -> dict:\n        return {"provider": "demo", "order_id": order_id, "amount": amount, "status": "pending"}\n\n    def verify_callback(self, payload: dict) -> bool:\n        return payload.get("status") in {"paid", "failed", "cancelled"}\n'''
+    otp_adapter = '''class OtpProvider:\n    def send_otp(self, phone_or_email: str) -> str:\n        return "123456"\n\n    def verify_otp(self, expected: str, provided: str) -> bool:\n        return expected == provided\n'''
+    courier_adapter = '''class CourierProvider:\n    def create_shipment(self, order_id: str, address: dict) -> dict:\n        return {"order_id": order_id, "status": "shipment_created", "address": address}\n\n    def update_status(self, shipment_id: str, status: str) -> dict:\n        return {"shipment_id": shipment_id, "status": status}\n'''
+    acceptance = '''from pathlib import Path\nroot = Path(__file__).resolve().parents[1]\nrequired = ["README.md", "ARCHITECTURE.md", "SERVICES.md", "INTEGRATIONS.md", "BUSINESS_RULES.md", "ROADMAP.md", "adapters/payment_gateway.py", "adapters/otp_provider.py", "adapters/courier_provider.py"]\nmissing = [path for path in required if not (root / path).exists()]\nassert not missing, f"Missing enterprise PRD files: {missing}"\nassert "PaymentGateway" in (root / "adapters/payment_gateway.py").read_text(encoding="utf-8")\nassert "OtpProvider" in (root / "adapters/otp_provider.py").read_text(encoding="utf-8")\nassert "CourierProvider" in (root / "adapters/courier_provider.py").read_text(encoding="utf-8")\nprint("enterprise PRD scaffold passed")\n'''
+    files = [
+        {"path": f"{base}/README.md", "content": readme},
+        {"path": f"{base}/ARCHITECTURE.md", "content": architecture},
+        {"path": f"{base}/SERVICES.md", "content": services},
+        {"path": f"{base}/INTEGRATIONS.md", "content": integrations},
+        {"path": f"{base}/BUSINESS_RULES.md", "content": business_rules},
+        {"path": f"{base}/ROADMAP.md", "content": roadmap},
+        {"path": f"{base}/adapters/payment_gateway.py", "content": payment_adapter},
+        {"path": f"{base}/adapters/otp_provider.py", "content": otp_adapter},
+        {"path": f"{base}/adapters/courier_provider.py", "content": courier_adapter},
+        {"path": f"{base}/deployment/README.md", "content": "# Deployment\n\nUse Docker/MySQL for local production-like testing. Add real cloud deployment only after secrets, HTTPS, tests, and provider credentials are ready.\n"},
+        {"path": f"{base}/tests/acceptance_check.py", "content": acceptance},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="enterprise-prd-build-mode",
+        steps=[
+            "Classify the PRD as complex/enterprise.",
+            "Create service boundaries instead of one giant file.",
+            "Define integration adapter contracts for real providers.",
+            "Write business rules as testable acceptance criteria.",
+            "Use a staged roadmap so long tasks can continue without losing direction.",
+        ],
+        suggested_files=files,
+        verify_commands=[f"python {base}/tests/acceptance_check.py"],
+        notes=[
+            "This does not fake real payment, OTP, courier, or cloud credentials; it creates replaceable provider contracts and a verified engineering roadmap.",
+            "Use this mode for any complex PRD, then build one vertical slice at a time.",
+        ],
+        requirements_analysis=[
+            "Very complex PRDs need staged delivery, service boundaries, and acceptance checks.",
+            "External integrations need adapter contracts before provider credentials are available.",
+            "Long multi-step work should be driven by a saved roadmap instead of one giant prompt.",
+        ],
+        clarification_questions=[
+            "Which payment, OTP, courier, storage, and deployment providers should be used in production?",
+            "Which workflow should become the first full vertical slice?",
+            "What are the required roles and permission boundaries?",
+        ],
+        stack=["FastAPI", "SQL database", "adapter interfaces", "business-rule tests", "Docker/MySQL deployment path"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="enterprise PRD -> service boundaries -> integration adapters -> business rules -> staged vertical slices -> verify and repair",
+    )
 def _looks_like_operating_system_request(lower: str) -> bool:
     os_terms = [
         "operating system", "toy os", "mini os", "kernel", "bootloader",
@@ -685,6 +754,8 @@ def _with_advisory(plan: TaskPlanResponse, prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if _looks_like_openbazaar_marketplace(lower):
         return _openbazaar_dispatch_plan(prompt)
+    if _looks_like_enterprise_prd_request(lower):
+        return _enterprise_prd_plan(prompt)
     subject = _advisory_subject(prompt)
     default_requirements = _default_requirements(lower, subject)
     if not plan.requirements_analysis:
@@ -1683,6 +1754,8 @@ def _database_backed_management_app_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if _looks_like_openbazaar_marketplace(lower):
         return _openbazaar_dispatch_plan(prompt)
+    if _looks_like_enterprise_prd_request(lower):
+        return _enterprise_prd_plan(prompt)
     if "student" in lower:
         title, entity, category, contact = "Student Management System", "Student", "Program", "Student ID"
         seeds = [
@@ -2043,6 +2116,8 @@ def _multi_file_management_app_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if _looks_like_openbazaar_marketplace(lower):
         return _openbazaar_dispatch_plan(prompt)
+    if _looks_like_enterprise_prd_request(lower):
+        return _enterprise_prd_plan(prompt)
     if "student" in lower:
         title, entity, category, contact = "Student Management System", "Student", "Program", "Student ID"
         seeds = [
@@ -3345,6 +3420,8 @@ def _management_system_plan(prompt: str) -> TaskPlanResponse:
     lower = prompt.lower()
     if _looks_like_openbazaar_marketplace(lower):
         return _openbazaar_dispatch_plan(prompt)
+    if _looks_like_enterprise_prd_request(lower):
+        return _enterprise_prd_plan(prompt)
     presets = {
         "crm": {
             "title": "CRM System",
@@ -4086,4 +4163,3 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
-

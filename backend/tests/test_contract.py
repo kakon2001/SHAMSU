@@ -1649,6 +1649,34 @@ def test_cli_help_includes_prd_build(test_env: dict[str, str]) -> None:
     assert "prd-build" in proc.stdout
 
 
+
+def test_enterprise_prd_mode_routes_complex_provider_prompts() -> None:
+    from app.routes.tasks import build_plan
+
+    plan = build_plan("Build this complex PRD with payment gateway, real OTP, courier workflow, cloud deployment, and multi-service backend business logic")
+
+    assert plan.mode == "enterprise-prd-build-mode"
+    assert "adapter interfaces" in plan.stack
+    assert "enterprise_prd_project/adapters/payment_gateway.py" in plan.file_plan
+    assert "enterprise PRD" in plan.workflow_summary
+    assert any("provider contracts" in note for note in plan.notes)
+
+
+def test_enterprise_prd_mode_scaffold_verifies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes import tasks
+
+    monkeypatch.setattr(tasks.settings, "agent_workdir", str(tmp_path))
+    plan = tasks.build_plan("Create an enterprise PRD system with payment, OTP, courier, and deployment integrations")
+    steps: list[tasks.TaskRunStep] = []
+    created = tasks._write_suggested_files(plan, overwrite=True, steps=steps)
+    ok = tasks._verify_created_files(plan, created, steps)
+
+    assert ok is True
+    assert "enterprise_prd_project/INTEGRATIONS.md" in created
+    assert "PaymentGateway" in (tmp_path / "enterprise_prd_project" / "adapters" / "payment_gateway.py").read_text(encoding="utf-8")
+    assert "OtpProvider" in (tmp_path / "enterprise_prd_project" / "adapters" / "otp_provider.py").read_text(encoding="utf-8")
+    assert "CourierProvider" in (tmp_path / "enterprise_prd_project" / "adapters" / "courier_provider.py").read_text(encoding="utf-8")
+
 def test_openbazaar_marketplace_prompt_uses_staged_roadmap_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.routes import tasks
 
@@ -1996,4 +2024,3 @@ def test_conversation_memory_respects_small_budget() -> None:
 
     assert len(memory) <= 310
     assert "conversation memory truncated" in memory or "dashboard" in memory
-
