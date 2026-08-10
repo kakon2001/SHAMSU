@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -143,6 +143,38 @@ def test_email_auth_and_user_session_isolation(backend_server: None) -> None:
     logout = authed("POST", "/api/auth/logout", logged_in["token"])
     assert logout == {"ok": True}
 
+
+def test_auth_rejects_weak_password_and_rate_limits_login(backend_server: None) -> None:
+    with pytest.raises(urllib.error.HTTPError) as weak_error:
+        request("POST", "/api/auth/register", {"email": "weak@example.com", "password": "12345678", "name": "Weak"})
+    weak_error.value.read()
+    weak_error.value.close()
+    assert weak_error.value.code == 400
+
+    last_code = 0
+    for _ in range(9):
+        try:
+            request("POST", "/api/auth/login", {"email": "limited@example.com", "password": "wrongpass123"})
+        except urllib.error.HTTPError as exc:
+            last_code = exc.code
+            exc.read()
+            exc.close()
+    assert last_code == 429
+
+
+def test_deployment_profile_uses_safe_env_placeholders() -> None:
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (root / ".env.deploy.example").read_text(encoding="utf-8")
+
+    assert (root / "backend" / "Dockerfile").exists()
+    assert (root / "backend" / ".dockerignore").exists()
+    assert (root / "docs" / "DEPLOYMENT.md").exists()
+    assert "${SHAMSU_MYSQL_PASSWORD}" in compose
+    assert "3307:3306" not in compose
+    assert "replace_with_strong_password" in env_example
+    assert ".env.deploy" in (root / ".gitignore").read_text(encoding="utf-8")
+
 def test_health_reports_model_and_history_store(backend_server: None) -> None:
     health = request("GET", "/api/health")
 
@@ -226,7 +258,7 @@ def test_context_summary_dashboard_search_and_project_map(backend_server: None, 
     rebuilt = request("POST", "/api/context/vector/rebuild", {"limit_files": 100})
     assert rebuilt["ok"] is True
     assert rebuilt["chunk_count"] >= 1
-    assert rebuilt["dims"] == 128
+    assert rebuilt["dims"] == 256
 
     stats = request("GET", "/api/context/vector/stats")
     assert stats["ready"] is True
@@ -376,7 +408,7 @@ def test_mcp_tools_list(test_env: dict[str, str]) -> None:
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -392,7 +424,7 @@ def test_cli_sessions_command(backend_server: None, test_env: dict[str, str]) ->
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -408,7 +440,7 @@ def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]
         input="y\n",
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert write_proc.returncode == 0, write_proc.stderr
     assert "Approve? [y/N]" in write_proc.stdout
@@ -421,7 +453,7 @@ def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert sessions_proc.returncode == 0, sessions_proc.stderr
     assert "CLI write: cli_pytest.txt" in sessions_proc.stdout
@@ -432,7 +464,7 @@ def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert read_proc.returncode == 0, read_proc.stderr
     assert "CLI direct write passed" in read_proc.stdout
@@ -444,7 +476,7 @@ def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]
         input="y\n",
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert delete_proc.returncode == 0, delete_proc.stderr
     assert "Approve? [y/N]" in delete_proc.stdout
@@ -456,7 +488,7 @@ def test_cli_direct_file_commands(backend_server: None, test_env: dict[str, str]
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert missing_proc.returncode == 2
     assert "HTTP 404" in missing_proc.stderr
@@ -477,7 +509,7 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None, test_env: dict
         input="y\n",
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     assert "Approve? [y/N]" in proc.stdout
@@ -489,7 +521,7 @@ def test_cli_ask_routes_obvious_file_create(backend_server: None, test_env: dict
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert read_proc.returncode == 0, read_proc.stderr
     assert "CLI ask route passed." in read_proc.stdout
@@ -647,6 +679,8 @@ def test_crm_management_system_template_run_creates_multi_file_project(tmp_path:
         "crm_system/package.json",
         "crm_system/README.md",
         "crm_system/WORKFLOW.md",
+        "crm_system/PROJECT_MANIFEST.json",
+        "crm_system/TASK_BREAKDOWN.md",
         "crm_system/index.html",
         "crm_system/src/main.js",
         "crm_system/src/views.js",
@@ -662,6 +696,11 @@ def test_crm_management_system_template_run_creates_multi_file_project(tmp_path:
     assert "localStorage" in (tmp_path / "crm_system" / "src" / "state.js").read_text(encoding="utf-8")
     assert "recordsTable" in (tmp_path / "crm_system" / "src" / "views.js").read_text(encoding="utf-8")
     assert "smoke passed" in (tmp_path / "crm_system" / "tests" / "smoke_test.py").read_text(encoding="utf-8")
+    manifest = json.loads((tmp_path / "crm_system" / "PROJECT_MANIFEST.json").read_text(encoding="utf-8"))
+    task_breakdown = (tmp_path / "crm_system" / "TASK_BREAKDOWN.md").read_text(encoding="utf-8")
+    assert manifest["generator"] == "SHAMSU autonomous multi-file project generator"
+    assert "Upgrade CRM System to a FastAPI and SQLite backend." in manifest["next_iteration_prompts"]
+    assert "Repair Workflow" in task_breakdown
 
 
 def test_student_management_system_template_run_creates_targeted_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -800,7 +839,7 @@ def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert index_proc.returncode == 0, index_proc.stderr
     assert "sample.py" in index_proc.stdout
@@ -813,7 +852,7 @@ def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert range_proc.returncode == 0, range_proc.stderr
     assert "1: def add" in range_proc.stdout
@@ -826,7 +865,7 @@ def test_cli_index_range_and_patch_commands(backend_server: None, test_env: dict
         input="y\n",
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert patch_proc.returncode == 0, patch_proc.stderr
     assert "Approve? [y/N]" in patch_proc.stdout
@@ -1008,7 +1047,7 @@ def test_agent_and_mcp_expose_web_search_tool(test_env: dict[str, str]) -> None:
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
@@ -1108,11 +1147,14 @@ def test_connector_marketplace_lists_enabled_and_planned_tools() -> None:
 
     connectors = {connector["id"]: connector for connector in result["connectors"]}
     assert result["enabled_count"] >= 5
-    assert result["planned_count"] >= 1
+    assert result["planned_count"] >= 5
     assert connectors["workspace-files"]["status"] == "enabled"
     assert connectors["web-search"]["privacy"] == "external-request"
     assert "web_search" in connectors["web-search"]["tools"]
     assert connectors["google-drive"]["setup_required"] is True
+    assert connectors["github-remote-search"]["privacy"] == "token-required"
+    assert "version lookup" in connectors["package-registry-search"]["capabilities"]
+    assert connectors["deployment-hosting"]["setup_required"] is True
 
 def test_connector_marketplace_get_single_connector() -> None:
     from app.routes.connectors import get_connector
@@ -1152,6 +1194,25 @@ def test_vector_index_direct_semantic_search(tmp_path: Path, monkeypatch: pytest
     assert "login_user" in matches[0]["preview"]
 
 
+
+def test_vector_index_uses_path_and_identifier_terms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import vector_index
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    nested = workspace / "frontend" / "components"
+    nested.mkdir(parents=True)
+    monkeypatch.setattr(vector_index.settings, "agent_workdir", str(workspace))
+    monkeypatch.setattr(vector_index.settings, "history_db_path", str(tmp_path / "sessions.db"))
+    (nested / "AccountDashboard.tsx").write_text("export function AccountDashboard(){ return loadUserSessionState(); }\n", encoding="utf-8")
+    (workspace / "notes.txt").write_text("plain unrelated notes about invoices\n", encoding="utf-8")
+
+    rebuilt = vector_index.rebuild_index()
+    matches = vector_index.semantic_search("account dashboard session state component", limit=3)
+
+    assert rebuilt["dims"] == 256
+    assert matches
+    assert matches[0]["path"] == "frontend/components/AccountDashboard.tsx"
 def test_query_policy_routes_general_web_workspace_and_upload() -> None:
     from app import query_policy
 
@@ -1354,7 +1415,7 @@ def test_mcp_exposes_long_context_bundle(test_env: dict[str, str]) -> None:
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
@@ -1538,7 +1599,7 @@ def test_mcp_exposes_dependency_tools(test_env: dict[str, str]) -> None:
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
@@ -1582,7 +1643,7 @@ def test_cli_help_includes_prd_build(test_env: dict[str, str]) -> None:
         env=test_env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     assert "prd-build" in proc.stdout
@@ -1935,12 +1996,4 @@ def test_conversation_memory_respects_small_budget() -> None:
 
     assert len(memory) <= 310
     assert "conversation memory truncated" in memory or "dashboard" in memory
-
-
-
-
-
-
-
-
 

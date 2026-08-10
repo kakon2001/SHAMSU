@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -74,6 +74,49 @@ CONNECTORS: list[dict[str, Any]] = [
         "setup_required": False,
     },
     {
+        "id": "github-remote-search",
+        "name": "GitHub Remote Search",
+        "category": "repo",
+        "status": "planned",
+        "privacy": "token-required",
+        "description": "Future connector for searching GitHub repositories, issues, pull requests, and remote code with scoped user permission.",
+        "capabilities": ["repository search", "issue lookup", "pull request review", "remote code context"],
+        "tools": [],
+        "setup_required": True,
+    },
+    {
+        "id": "package-registry-search",
+        "name": "Package Registry Search",
+        "category": "developer-tools",
+        "status": "planned",
+        "privacy": "external-request",
+        "description": "Future connector for npm, PyPI, and documentation lookup before SHAMSU suggests external libraries.",
+        "capabilities": ["library discovery", "version lookup", "docs links", "install risk notes"],
+        "tools": [],
+        "setup_required": True,
+    },
+    {
+        "id": "issue-tracker",
+        "name": "Issue Tracker",
+        "category": "project-management",
+        "status": "planned",
+        "privacy": "oauth-required",
+        "description": "Future connector for Jira, Linear, or GitHub Issues so SHAMSU can turn failures and TODOs into trackable work.",
+        "capabilities": ["create issue", "read backlog", "link commits", "track repair tasks"],
+        "tools": [],
+        "setup_required": True,
+    },
+    {
+        "id": "deployment-hosting",
+        "name": "Deployment Hosting",
+        "category": "cloud",
+        "status": "planned",
+        "privacy": "token-required",
+        "description": "Future connector for Netlify, Vercel, or Docker hosts to deploy generated apps after tests pass.",
+        "capabilities": ["preview deploy", "production deploy", "environment variables", "build logs"],
+        "tools": [],
+        "setup_required": True,
+    },    {
         "id": "google-drive",
         "name": "Google Drive",
         "category": "cloud",

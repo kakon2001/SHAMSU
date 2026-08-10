@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { uploadContextFile } from "../api/client";
 import type { ChatItem, UploadedContextFile } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -127,6 +127,13 @@ export function ChatPanel({
   const userItems = items.filter((it) => it.kind === "user");
   const latestUser = userItems[userItems.length - 1];
   const latestPromptNumber = latestUser ? userPromptNumber(items, latestUser.id) : 0;
+  const statusText = hasPendingApproval
+    ? "Approval needed before SHAMSU continues"
+    : busy && latestUser
+      ? `Working on prompt ${latestPromptNumber}`
+      : connected
+        ? "Ready for your next prompt"
+        : "Backend disconnected";
 
   const pickable = files.filter((f) => !attached.includes(f));
   const filtered = filter
@@ -139,13 +146,17 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
+      <div className={`chat-panel__status-strip${busy ? " is-busy" : ""}${hasPendingApproval ? " needs-approval" : ""}`}>
+        <strong>{statusText}</strong>
+        <span>{latestPromptNumber ? `Prompt ${latestPromptNumber} is newest; earlier prompts stay above it.` : "Start a session by sending a prompt or uploading a file."}</span>
+      </div>
       <details className="activity-history" open={showPromptTracker} onToggle={(event) => setShowPromptTracker(event.currentTarget.open)}>
         <summary><span>Prompt history</span><small>{latestPromptNumber ? `${latestPromptNumber} prompts` : "recent prompts"}</small></summary>
         <div className="activity-history__list">
           {recentActivity.length === 0 && <div className="activity-history__empty">No activity yet.</div>}
           {recentActivity.map((item) => {
             if (item.kind === "user") {
-                            const number = userPromptNumber(items, item.id);
+              const number = userPromptNumber(items, item.id);
               const latest = item.id === latestUser?.id ? " latest" : "";
               return <div key={item.id} className={`activity-history__row${latest}`}>Prompt {number}: {promptPreview(item.content)}</div>;
             }
@@ -337,22 +348,4 @@ export function ChatPanel({
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

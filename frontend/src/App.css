@@ -1694,3 +1694,46 @@
     grid-template-columns: 1fr;
   }
 }
+
+.chat-panel__status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--muted);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.chat-panel__status-strip strong {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.chat-panel__status-strip.is-busy {
+  background: #f4edff;
+}
+
+.chat-panel__status-strip.needs-approval {
+  background: #fff7ed;
+}
+
+.chat-panel__status-strip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .chat-panel__status-strip {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .chat-panel__status-strip span {
+    white-space: normal;
+  }
+}

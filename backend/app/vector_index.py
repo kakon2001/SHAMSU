@@ -20,7 +20,7 @@ from pathlib import Path
 from . import context_index
 from .config import settings
 
-VECTOR_DIMS = 128
+VECTOR_DIMS = 256
 DEFAULT_LIMIT_FILES = 500
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[0-9]+")
 SYNONYMS = {
@@ -75,7 +75,7 @@ def rebuild_index(limit_files: int = DEFAULT_LIMIT_FILES) -> dict[str, object]:
                     chunk.start_line,
                     chunk.end_line,
                     chunk.text,
-                    json.dumps(embed_text(f"{chunk.path}\n{chunk.text}")),
+                    json.dumps(embed_text(_embedding_document(chunk))),
                     now,
                 )
             )
@@ -173,16 +173,62 @@ def format_semantic_results(query: str, limit: int = 8) -> str:
 
 
 def embed_text(text: str) -> list[float]:
+    """Create an offline semantic vector with code-aware weighting.
+
+    It is still deterministic and dependency-light, but stronger than plain
+    bag-of-words: identifiers are split, neighboring terms become n-grams,
+    and code/project terms receive extra weight.
+    """
     vector = [0.0] * VECTOR_DIMS
-    for token in _expanded_tokens(text):
+    for token, weight in _weighted_terms(text):
         digest = hashlib.blake2b(token.encode("utf-8"), digest_size=4).digest()
         index = int.from_bytes(digest, "big") % VECTOR_DIMS
-        vector[index] += 1.0
+        vector[index] += weight
     norm = math.sqrt(sum(value * value for value in vector))
     if not norm:
         return vector
     return [round(value / norm, 8) for value in vector]
 
+
+def _embedding_document(chunk: context_index.ContextChunk) -> str:
+    summary = context_index.summarize_text(chunk.path, chunk.text, max_chars=260)
+    path_terms = " ".join(_path_terms(chunk.path))
+    return f"path {chunk.path}\npath_terms {path_terms}\nsummary {summary}\ncontent\n{chunk.text}"
+
+
+def _weighted_terms(text: str) -> list[tuple[str, float]]:
+    tokens = _expanded_tokens(text)
+    weighted: list[tuple[str, float]] = []
+    for token in tokens:
+        weight = 1.0
+        if "_" in token or token in {"class", "function", "def", "api", "route", "schema", "state", "component"}:
+            weight += 0.35
+        weighted.append((token, weight))
+        for part in _identifier_parts(token):
+            if part != token:
+                weighted.append((part, 0.75))
+    for left, right in zip(tokens, tokens[1:]):
+        weighted.append((f"{left}_{right}", 0.55))
+    for first, second, third in zip(tokens, tokens[1:], tokens[2:]):
+        weighted.append((f"{first}_{second}_{third}", 0.3))
+    return weighted
+
+
+def _identifier_parts(token: str) -> list[str]:
+    parts = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", token).replace("_", "-").replace(".", "-").split("-")
+    return [part.lower() for part in parts if len(part) > 1]
+
+
+def _path_terms(path: str) -> list[str]:
+    clean = Path(path)
+    parts: list[str] = []
+    for piece in clean.parts:
+        parts.extend(_identifier_parts(piece))
+        parts.extend(_tokens(piece))
+    suffix = clean.suffix.lstrip(".").lower()
+    if suffix:
+        parts.append(suffix)
+    return list(dict.fromkeys(parts))
 
 def _connect() -> sqlite3.Connection:
     return sqlite3.connect(_db_path())

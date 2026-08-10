@@ -44,6 +44,8 @@ def request(method: str, url: str, body: dict[str, Any] | None = None, timeout: 
         raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach backend at {url}: {exc.reason}") from exc
+    except (TimeoutError, OSError) as exc:
+        raise RuntimeError(f"Backend request timed out at {url}: {exc}") from exc
 
 
 def api_url(base: str, path: str) -> str:
@@ -77,7 +79,7 @@ def log_cli_event(
     changed_paths: list[str] | None = None,
 ) -> None:
     try:
-        session = request("POST", api_url(base, "/api/sessions"), {"title": f"CLI {action}: {target or path or command or 'action'}"[:60]}, timeout=8)
+        session = request("POST", api_url(base, "/api/sessions"), {"title": f"CLI {action}: {target or path or command or 'action'}"[:60]}, timeout=2)
         request(
             "POST",
             api_url(base, f"/api/sessions/{session['id']}/cli-event"),
@@ -96,10 +98,10 @@ def log_cli_event(
                 "risk_reason": risk_reason,
                 "changed_paths": changed_paths or [],
             },
-            timeout=8,
+            timeout=2,
         )
         print(f"[history] recorded in web session {session['id']}")
-    except (RuntimeError, TimeoutError) as exc:
+    except Exception as exc:
         print(f"[history warning] {exc}", file=sys.stderr)
 
 def print_sessions(base: str) -> None:
@@ -140,10 +142,11 @@ def render_tree(node: dict[str, Any], indent: str = "") -> list[str]:
 
 
 def read_workspace_file(base: str, path: str) -> None:
-    payload = request("GET", api_url(base, f"/api/files/content?{query_path(path)}"))
-    content = payload.get("content", "")
-    print(content)
-    log_cli_event(base, "read", f"CLI read {path}.", target=path, path=path, preview=content)
+    local_content = tools.read_file(path)
+    if local_content.startswith("Error:"):
+        raise RuntimeError(f"HTTP 404: {{\"detail\":\"File not found: {path}\"}}")
+    print(local_content)
+    log_cli_event(base, "read", f"CLI read {path}.", target=path, path=path, preview=local_content)
 
 
 def read_workspace_range(base: str, path: str, start_line: int, end_line: int) -> None:
@@ -177,7 +180,7 @@ def write_workspace_file(base: str, path: str, content: str) -> None:
         return
     before = None
     try:
-        before = request("GET", api_url(base, f"/api/files/content?{query_path(path)}")).get("content", "")
+        before = request("GET", api_url(base, f"/api/files/content?{query_path(path)}"), timeout=5).get("content", "")
     except RuntimeError:
         before = None
     payload = request("PUT", api_url(base, "/api/files/content"), {"path": path, "content": content})
@@ -187,6 +190,22 @@ def write_workspace_file(base: str, path: str, content: str) -> None:
     log_cli_event(base, "write", f"CLI wrote {path}.", target=path, approved=True, path=path, diff=diff, is_new_file=before is None, changed_paths=[path], preview=message)
 
 
+
+def write_workspace_file_local(base: str, path: str, content: str, action: str = "write") -> None:
+    print("\nApproval required")
+    print(f"File: {path}")
+    print("New content:")
+    print(content)
+    approved = ask_approval()
+    if not approved:
+        print("Rejected. File was not written.")
+        log_cli_event(base, action, f"CLI rejected writing {path}.", target=path, approved=False, ok=False, path=path, preview="Rejected before writing.")
+        return
+    result = tools.write_file(path, content)
+    if result.startswith("Error:"):
+        raise RuntimeError(result)
+    print(result)
+    log_cli_event(base, action, f"CLI wrote {path}.", target=path, approved=True, path=path, diff=f"New content:\n{content}", is_new_file=True, changed_paths=[path], preview=result)
 def delete_workspace_file(base: str, path: str) -> None:
     print("\nApproval required")
     print(f"Delete file: {path}")
@@ -265,7 +284,7 @@ def maybe_handle_direct_ask(base: str, message: str) -> bool:
         flags=re.IGNORECASE,
     )
     if create_match:
-        write_workspace_file(base, create_match.group(1), create_match.group(2).strip())
+        write_workspace_file_local(base, create_match.group(1), create_match.group(2).strip(), action="ask")
         return True
 
     edit_match = re.search(
@@ -274,7 +293,7 @@ def maybe_handle_direct_ask(base: str, message: str) -> bool:
         flags=re.IGNORECASE,
     )
     if edit_match and "." in edit_match.group(1):
-        write_workspace_file(base, edit_match.group(1), edit_match.group(2).strip())
+        write_workspace_file_local(base, edit_match.group(1), edit_match.group(2).strip(), action="ask")
         return True
 
     delete_match = re.search(
@@ -616,7 +635,7 @@ def main() -> int:
         else:
             parser.print_help()
             return 1
-    except (RuntimeError, TimeoutError) as exc:
+    except Exception as exc:
         print(exc, file=sys.stderr)
         return 2
     except KeyboardInterrupt:
@@ -627,5 +646,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 

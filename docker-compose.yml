@@ -1,0 +1,45 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    environment:
+      MYSQL_DATABASE: ${SHAMSU_MYSQL_DATABASE}
+      MYSQL_USER: ${SHAMSU_MYSQL_USER}
+      MYSQL_PASSWORD: ${SHAMSU_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${SHAMSU_MYSQL_ROOT_PASSWORD}
+    volumes:
+      - shamsu_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      AGENT_WORKDIR: /workspace
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${SHAMSU_MYSQL_USER}
+      MYSQL_PASSWORD: ${SHAMSU_MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${SHAMSU_MYSQL_DATABASE}
+      HISTORY_DB_PATH: /data/sessions.db
+      ACTIVITY_LOG_PATH: /data/activity.log
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./workspace:/workspace
+      - shamsu_backend_data:/data
+
+volumes:
+  shamsu_mysql:
+  shamsu_backend_data:
