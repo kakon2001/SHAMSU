@@ -1,4 +1,4 @@
-﻿export interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   name: string;
@@ -304,6 +304,36 @@ export interface PreviewState {
 }
 
 
+
+export interface RepairSuggestion {
+  command: string;
+  failure: string;
+  likely_files: string[];
+  likely_lines: number[];
+  search_query: string;
+  recommended_commands: string[];
+  next_prompt: string;
+}
+
+export interface VerificationCommandResult {
+  command: string;
+  cwd: string;
+  ok: boolean;
+  exit_code: number | null;
+  output: string;
+  failure_summary?: string | null;
+}
+
+export interface VerificationRunResponse {
+  target: string;
+  run: boolean;
+  commands: string[];
+  results: VerificationCommandResult[];
+  ok: boolean;
+  repair_feedback: string[];
+  repair_plan: RepairSuggestion[];
+  next_steps: string[];
+}
 export interface ReliabilityReport {
   phases: string[];
   verification_feedback: string[];

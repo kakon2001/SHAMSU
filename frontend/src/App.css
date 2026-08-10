@@ -1612,3 +1612,85 @@
 }
 
 
+
+.demo-control-panel {
+  margin-top: 16px;
+}
+
+.demo-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 16px;
+}
+
+.verify-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.verify-row select {
+  border: 1px solid #d8dce5;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fff;
+  color: var(--text);
+}
+
+.verify-command-input,
+.prd-build-input {
+  min-height: 88px;
+}
+
+.verification-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.verification-card--ok {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.verification-card--fail {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.verification-card span,
+.repair-plan-card span,
+.repair-plan-card p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.verification-card pre,
+.repair-plan-card code {
+  border-radius: 6px;
+  background: #111827;
+  color: #f9fafb;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.repair-plan-card {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+}
+
+@media (max-width: 900px) {
+  .demo-control-grid {
+    grid-template-columns: 1fr;
+  }
+}

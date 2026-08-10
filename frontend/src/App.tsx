@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 import {
@@ -30,6 +30,7 @@ import {
   register,
   rebuildVectorIndex,
   runTaskBuild,
+  runWorkflowVerification,
   startPreviewServer,
   saveFileContent,
   setAuthToken,
@@ -38,7 +39,7 @@ import {
 import { ChatPanel } from "./components/ChatPanel";
 import { EditorPane } from "./components/EditorPane";
 import { useAgent } from "./hooks/useAgent";
-import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema, DependencyScan, DependencyPlan, DependencyInstallResult, PreviewArtifact } from "./types";
+import type { AdminOverview, AuthUser, ChatItem, ConnectorMarketplace, ContextDashboard, EditorTab, FileNode, GitCommit, GitSearchHit, GitStatus, ModelState, SessionInfo, WebSearchResult, VectorMatch, VectorStats, ReportHistoryItem, ReportQueryResult, ReportSchema, DependencyScan, DependencyPlan, DependencyInstallResult, PreviewArtifact, VerificationRunResponse } from "./types";
 
 function flattenFiles(node: FileNode | null): string[] {
   if (!node) return [];
@@ -108,6 +109,12 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [verifyTarget, setVerifyTarget] = useState("workspace");
+  const [verifyCommandText, setVerifyCommandText] = useState("");
+  const [verifyResult, setVerifyResult] = useState<VerificationRunResponse | null>(null);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [prdBuildText, setPrdBuildText] = useState("Build from the uploaded PRD step by step. Start with requirement analysis, stack choice, file plan, then create the first verified MVP.");
+  const [exportMessage, setExportMessage] = useState("");
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -474,6 +481,58 @@ function App() {
     refreshSessions,
   );
   const orderedChatItems = [...items, ...autoBuildItems].sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0));
+  const runVerificationCheck = useCallback(() => {
+    const commands = verifyCommandText
+      .split(/\r?\n|;/)
+      .map((command) => command.trim())
+      .filter(Boolean);
+    setVerifyBusy(true);
+    setVerifyResult(null);
+    runWorkflowVerification(verifyTarget, commands.length ? commands : null, true)
+      .then((result) => {
+        setVerifyResult(result);
+        setNotice(result.ok ? "Verification passed." : "Verification failed. Review the repair plan.");
+      })
+      .catch((err: Error) => setNotice(err.message))
+      .finally(() => setVerifyBusy(false));
+  }, [verifyCommandText, verifyTarget]);
+
+  const useRepairPrompt = useCallback((prompt: string) => {
+    setDashboardOpen(false);
+    runAutoBuild(prompt);
+  }, [runAutoBuild]);
+
+  const runPrdBuildMode = useCallback(() => {
+    const prompt = prdBuildText.trim();
+    if (!prompt) {
+      setNotice("Write a PRD build instruction first.");
+      return;
+    }
+    setDashboardOpen(false);
+    runAutoBuild(prompt);
+  }, [prdBuildText, runAutoBuild]);
+
+  const exportVisibleDemoData = useCallback(() => {
+    const payload = {
+      project: "SHAMSU",
+      exported_at: new Date().toISOString(),
+      active_session_id: activeSessionId,
+      sessions,
+      admin_overview: adminOverview,
+      context_dashboard: contextDashboard,
+      verification: verifyResult,
+      git_status: gitStatus,
+      recent_chat_items: orderedChatItems,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `shamsu-demo-export-${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setExportMessage("Exported currently loaded prompt/history/dashboard data.");
+  }, [activeSessionId, adminOverview, contextDashboard, gitStatus, orderedChatItems, sessions, verifyResult]);
   const sendOrBuild = useCallback((text: string, contextFiles: string[], contextFileLabels: Record<string, string> = {}) => {
     const lower = text.toLowerCase();
     const openBazaarPrompt = looksLikeOpenBazaarPrompt(text);
@@ -666,6 +725,63 @@ function App() {
             <div className="dashboard-card"><span className="dashboard-card__label">Indexed Files</span><strong>{contextDashboard?.file_count ?? 0}</strong></div>
             <div className="dashboard-card"><span className="dashboard-card__label">Context Chunks</span><strong>{contextDashboard?.chunk_count ?? 0}</strong></div>
             <div className="dashboard-card"><span className="dashboard-card__label">Uploads</span><strong>{contextDashboard?.uploaded_count ?? 0}</strong></div>
+          </div>
+          <div className="dashboard-git demo-control-panel">
+            <div className="dashboard-panel__header">
+              <strong>Build, Verify, Export</strong>
+              <span>demo workflow controls</span>
+            </div>
+            <div className="demo-control-grid">
+              <div>
+                <h3>Run Tests</h3>
+                <div className="verify-row">
+                  <select value={verifyTarget} onChange={(event) => setVerifyTarget(event.target.value)}>
+                    <option value="workspace">Workspace</option>
+                    <option value="backend">Backend</option>
+                    <option value="frontend">Frontend</option>
+                  </select>
+                  <button className="btn" onClick={runVerificationCheck} disabled={verifyBusy}>{verifyBusy ? "Running..." : "Run Tests"}</button>
+                </div>
+                <textarea
+                  className="report-sql-input verify-command-input"
+                  value={verifyCommandText}
+                  onChange={(event) => setVerifyCommandText(event.target.value)}
+                  placeholder="Optional commands, one per line. Leave blank for SHAMSU defaults."
+                  spellCheck={false}
+                />
+                {verifyResult && (
+                  <div className={`verification-card verification-card--${verifyResult.ok ? "ok" : "fail"}`}>
+                    <strong>{verifyResult.ok ? "Verification passed" : "Verification needs repair"}</strong>
+                    <span>{verifyResult.commands.join("; ")}</span>
+                    {verifyResult.results.slice(0, 3).map((result) => (
+                      <pre key={result.command}>{`${result.command}\n${result.output || result.failure_summary || "No output"}`}</pre>
+                    ))}
+                    {verifyResult.repair_plan.slice(0, 2).map((plan, index) => (
+                      <div key={`${plan.command}-${index}`} className="repair-plan-card">
+                        <strong>Repair plan {index + 1}</strong>
+                        <span>Files: {plan.likely_files.join(", ") || "unknown"}{plan.likely_lines.length ? ` | Lines: ${plan.likely_lines.join(", ")}` : ""}</span>
+                        <p>{plan.failure}</p>
+                        <code>{plan.search_query}</code>
+                        <button className="btn" onClick={() => useRepairPrompt(plan.next_prompt)}>Send Repair Prompt</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h3>PRD Build Mode</h3>
+                <textarea
+                  className="report-sql-input prd-build-input"
+                  value={prdBuildText}
+                  onChange={(event) => setPrdBuildText(event.target.value)}
+                  spellCheck={false}
+                />
+                <button className="btn" onClick={runPrdBuildMode} disabled={autoBuildBusy}>{autoBuildBusy ? "Building..." : "Start PRD Build"}</button>
+                <h3>Demo Evidence</h3>
+                <button className="btn" onClick={exportVisibleDemoData}>Export Loaded History</button>
+                {exportMessage && <p className="web-search-message">{exportMessage}</p>}
+              </div>
+            </div>
           </div>
           <div className="dashboard-columns">
             <div>
@@ -1008,5 +1124,4 @@ function App() {
 }
 
 export default App;
-
 
