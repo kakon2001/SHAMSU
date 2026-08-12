@@ -209,6 +209,38 @@ def test_telegram_project_isolation(backend_server: None) -> None:
     bad_secret.value.close()
     assert bad_secret.value.code == 401
 
+
+
+def test_telegram_simple_chat_records_history(backend_server: None) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "333", "title": "Simple chat"})
+    response = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "333", "message": "Say hello in 2 lines"},
+    )
+    history = telegram_request("GET", f"/api/telegram/projects/{project['id']}/history?telegram_user_id=333")
+
+    assert "Hello" in response["reply"]
+    assert "You: Say hello in 2 lines" in history["summary"]
+    assert "SHAMSU:" in history["summary"]
+    assert "project_understanding" not in history["summary"]
+
 def test_deployment_profile_uses_safe_env_placeholders() -> None:
     root = Path(__file__).resolve().parents[2]
     compose = (root / "docker-compose.yml").read_text(encoding="utf-8")

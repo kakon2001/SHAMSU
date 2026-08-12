@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bridge_secret: str = "change-this-telegram-bridge-secret"
     telegram_poll_interval_seconds: float = 1.0
-
+    shamsu_api_base: str = "http://127.0.0.1:8080"
     max_tool_iterations: int = 16
     shell_timeout_seconds: int = 120
     max_tool_output_chars: int = 8000

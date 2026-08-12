@@ -8,6 +8,8 @@ Commands in Telegram:
     /new Project name   create a private SHAMSU project for this Telegram user
     /projects           list only this Telegram user's projects
     /use <project_id>   select one of this user's projects
+    /history            show selected project history
+    /stop               stop a busy selected project
     any text            send prompt to the selected project
 """
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -56,9 +59,13 @@ def shamsu_request(method: str, path: str, body: dict[str, Any] | None = None) -
         },
         method=method,
     )
-    with urllib.request.urlopen(req, timeout=180) as response:
-        text = response.read().decode("utf-8")
-        return json.loads(text) if text else None
+    try:
+        with urllib.request.urlopen(req, timeout=180) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"SHAMSU API error {exc.code}: {detail}") from exc
 
 
 def send_message(chat_id: int, text: str) -> None:
@@ -75,6 +82,17 @@ def list_projects(user_id: str) -> list[dict[str, Any]]:
     return shamsu_request("GET", f"/api/telegram/users/{urllib.parse.quote(user_id)}/projects")
 
 
+def project_history(user_id: str, project_id: str) -> str:
+    query = urllib.parse.urlencode({"telegram_user_id": user_id})
+    result = shamsu_request("GET", f"/api/telegram/projects/{project_id}/history?{query}")
+    return result.get("summary") or "No project history yet."
+
+
+
+def stop_selected_project(user_id: str, project_id: str) -> str:
+    query = urllib.parse.urlencode({"telegram_user_id": user_id})
+    result = shamsu_request("POST", f"/api/telegram/projects/{project_id}/stop?{query}")
+    return result.get("message") or "Stop command sent."
 def selected_or_latest_project(user_id: str) -> dict[str, Any] | None:
     projects = list_projects(user_id)
     if not projects:
@@ -90,14 +108,14 @@ def selected_or_latest_project(user_id: str) -> dict[str, Any] | None:
 def handle_text(chat_id: int, user_id: str, text: str) -> None:
     text = text.strip()
     if text in {"/start", "help", "/help"}:
-        send_message(chat_id, "SHAMSU Telegram bridge\n/new Project name - create private project\n/projects - list your projects\n/use <project_id> - select project\nThen send any prompt to the selected project.")
+        send_message(chat_id, "SHAMSU Telegram bridge\n/new Project name - create private project\n/projects - list your projects\n/use <project_id> - select project\n/history - show selected project history\n/stop - stop a busy project\nThen send any prompt to the selected project.")
         return
     if text.startswith("/new"):
         title = text.removeprefix("/new").strip() or "Telegram project"
         project = create_project(user_id, title)
         send_message(chat_id, f"Created private SHAMSU project:\n{project['title']}\nID: {project['id']}")
         return
-    if text == "/projects":
+    if text in {"/projects", "/project"}:
         projects = list_projects(user_id)
         if not projects:
             send_message(chat_id, "No SHAMSU projects yet. Send /new Project name")
@@ -108,6 +126,20 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
             lines.append(f"- {project['title']}\n  {project['id']}{active}")
         send_message(chat_id, "\n".join(lines))
         return
+    if text == "/history":
+        project = selected_or_latest_project(user_id)
+        if project is None:
+            send_message(chat_id, "No SHAMSU project selected yet. Send /new Project name first.")
+            return
+        send_message(chat_id, project_history(user_id, project["id"]))
+        return
+    if text == "/stop":
+        project = selected_or_latest_project(user_id)
+        if project is None:
+            send_message(chat_id, "No SHAMSU project selected yet. Send /new Project name first.")
+            return
+        send_message(chat_id, stop_selected_project(user_id, project["id"]))
+        return
     if text.startswith("/use "):
         project_id = text.split(maxsplit=1)[1].strip()
         projects = list_projects(user_id)
@@ -116,6 +148,9 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
             return
         _SELECTED_PROJECT[user_id] = project_id
         send_message(chat_id, f"Selected SHAMSU project {project_id}")
+        return
+    if text.startswith("/"):
+        send_message(chat_id, "Unknown command. Use /start, /new, /projects, /use, /history, or /stop.")
         return
 
     project = selected_or_latest_project(user_id)
@@ -127,7 +162,17 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
         f"/api/telegram/projects/{project['id']}/message",
         {"telegram_user_id": user_id, "message": text},
     )
-    send_message(chat_id, response.get("reply") or "SHAMSU finished, but no text reply was produced.")
+    send_message(chat_id, response.get("reply") or "SHAMSU finished, but no text reply was produced. Send /history to see project history.")
+def handle_text_safe(chat_id: int, user_id: str, text: str) -> None:
+    print(f"Telegram message from {user_id}: {text}")
+    try:
+        handle_text(chat_id, user_id, text)
+    except Exception as exc:
+        print(f"Telegram command failed for {user_id}: {exc}")
+        try:
+            send_message(chat_id, f"SHAMSU Telegram error: {exc}\nCheck that backend is running, then restart python telegram_bot.py.")
+        except Exception as send_exc:
+            print(f"Could not send Telegram error message: {send_exc}")
 
 
 def main() -> None:
@@ -144,7 +189,16 @@ def main() -> None:
                 user = message.get("from") or {}
                 if not text or "id" not in chat or "id" not in user:
                     continue
-                handle_text(int(chat["id"]), str(user["id"]), text)
+                handle_text_safe(int(chat["id"]), str(user["id"]), text)
+        except (TimeoutError, socket.timeout) as exc:
+            print(f"Telegram polling timeout, continuing: {exc}")
+            continue
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, socket.timeout):
+                print("Telegram polling timeout, continuing.")
+                continue
+            print(f"Telegram network error: {exc}")
+            time.sleep(3)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             print(f"HTTP error: {exc.code} {detail}")
