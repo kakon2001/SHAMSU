@@ -1,4 +1,4 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db, model_registry
 from .agent.session_manager import manager
 from .config import settings
-from .routes import admin, agent, auth, connectors, context, dependencies, files, git as git_routes, models, preview, reports, tasks, uploads, web_search, workflows
+from .routes import admin, agent, auth, connectors, context, dependencies, files, git as git_routes, models, preview, reports, tasks, telegram, uploads, web_search, workflows
 
 
 def configure_activity_logging() -> None:
@@ -55,6 +55,7 @@ app.include_router(models.router)
 app.include_router(preview.router)
 app.include_router(reports.router)
 app.include_router(tasks.router)
+app.include_router(telegram.router)
 app.include_router(uploads.router)
 app.include_router(web_search.router)
 app.include_router(workflows.router)

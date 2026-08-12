@@ -1,4 +1,4 @@
-﻿"""Persistence for chat sessions.
+"""Persistence for chat sessions.
 
 MySQL is used when it is available. If it is not available, the app falls back
 to a local SQLite file so session history still survives backend restarts.
@@ -87,6 +87,30 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 )
 """
 
+_MYSQL_TELEGRAM_PROJECTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS telegram_projects (
+    id CHAR(32) NOT NULL PRIMARY KEY,
+    telegram_user_id VARCHAR(64) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    session_id CHAR(32) NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    INDEX (telegram_user_id),
+    INDEX (session_id)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+"""
+
+_SQLITE_TELEGRAM_PROJECTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS telegram_projects (
+    id TEXT NOT NULL PRIMARY KEY,
+    telegram_user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
 def is_available() -> bool:
     return _pool is not None or _sqlite_ready
 
@@ -128,6 +152,8 @@ def _init_sqlite_sync() -> None:
         conn.execute(_SQLITE_SCHEMA)
         conn.execute(_SQLITE_USERS_SCHEMA)
         conn.execute(_SQLITE_TOKENS_SCHEMA)
+        conn.execute(_SQLITE_TELEGRAM_PROJECTS_SCHEMA)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_telegram_projects_user ON telegram_projects(telegram_user_id)")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if "owner_id" not in columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local'")
@@ -225,6 +251,7 @@ async def init_db() -> None:
                     await cur.execute(_MYSQL_SCHEMA)
                     await cur.execute(_MYSQL_USERS_SCHEMA)
                     await cur.execute(_MYSQL_TOKENS_SCHEMA)
+                    await cur.execute(_MYSQL_TELEGRAM_PROJECTS_SCHEMA)
                     try:
                         await cur.execute("ALTER TABLE sessions ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'local'")
                     except Exception:
@@ -476,11 +503,110 @@ async def delete_session(session_id: str) -> None:
     except Exception as exc:
         log.warning("Failed to delete session %s from MySQL: %s", session_id, exc)
 
+def _telegram_project_row(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "id": str(data["id"]),
+        "telegram_user_id": str(data["telegram_user_id"]),
+        "title": str(data["title"]),
+        "session_id": str(data["session_id"]),
+        "created_at": _parse_datetime(data["created_at"]),
+        "updated_at": _parse_datetime(data["updated_at"]),
+    }
 
 
+def _sqlite_create_telegram_project_sync(telegram_user_id: str, title: str, session_id: str) -> dict[str, Any]:
+    project_id = uuid.uuid4().hex
+    now = datetime.utcnow().isoformat()
+    with _sqlite_connect() as conn:
+        conn.execute(
+            "INSERT INTO telegram_projects (id, telegram_user_id, title, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, telegram_user_id, title, session_id, now, now),
+        )
+        row = conn.execute("SELECT * FROM telegram_projects WHERE id = ?", (project_id,)).fetchone()
+    return _telegram_project_row(row)
 
 
+def _sqlite_list_telegram_projects_sync(telegram_user_id: str) -> list[dict[str, Any]]:
+    with _sqlite_connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM telegram_projects WHERE telegram_user_id = ? ORDER BY updated_at DESC",
+            (telegram_user_id,),
+        ).fetchall()
+    return [_telegram_project_row(row) for row in rows]
 
 
+def _sqlite_get_telegram_project_sync(project_id: str, telegram_user_id: str) -> dict[str, Any] | None:
+    with _sqlite_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM telegram_projects WHERE id = ? AND telegram_user_id = ?",
+            (project_id, telegram_user_id),
+        ).fetchone()
+    return _telegram_project_row(row) if row else None
 
 
+def _sqlite_touch_telegram_project_sync(project_id: str) -> None:
+    with _sqlite_connect() as conn:
+        conn.execute("UPDATE telegram_projects SET updated_at = ? WHERE id = ?", (datetime.utcnow().isoformat(), project_id))
+
+
+async def create_telegram_project(telegram_user_id: str, title: str, session_id: str) -> dict[str, Any]:
+    telegram_user_id = str(telegram_user_id).strip()
+    safe_title = title.strip()[:255] or "Telegram project"
+    if _pool is None:
+        if not _sqlite_ready:
+            raise RuntimeError("Database is not available")
+        return await asyncio.to_thread(_sqlite_create_telegram_project_sync, telegram_user_id, safe_title, session_id)
+    project_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "INSERT INTO telegram_projects (id, telegram_user_id, title, session_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (project_id, telegram_user_id, safe_title, session_id, now, now),
+            )
+            await cur.execute("SELECT * FROM telegram_projects WHERE id = %s", (project_id,))
+            row = await cur.fetchone()
+    return _telegram_project_row(row)
+
+
+async def list_telegram_projects(telegram_user_id: str) -> list[dict[str, Any]]:
+    telegram_user_id = str(telegram_user_id).strip()
+    if _pool is None:
+        if not _sqlite_ready:
+            return []
+        return await asyncio.to_thread(_sqlite_list_telegram_projects_sync, telegram_user_id)
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM telegram_projects WHERE telegram_user_id = %s ORDER BY updated_at DESC",
+                (telegram_user_id,),
+            )
+            rows = await cur.fetchall()
+    return [_telegram_project_row(row) for row in rows]
+
+
+async def get_telegram_project(project_id: str, telegram_user_id: str) -> dict[str, Any] | None:
+    telegram_user_id = str(telegram_user_id).strip()
+    if _pool is None:
+        if not _sqlite_ready:
+            return None
+        return await asyncio.to_thread(_sqlite_get_telegram_project_sync, project_id, telegram_user_id)
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM telegram_projects WHERE id = %s AND telegram_user_id = %s",
+                (project_id, telegram_user_id),
+            )
+            row = await cur.fetchone()
+    return _telegram_project_row(row) if row else None
+
+
+async def touch_telegram_project(project_id: str) -> None:
+    if _pool is None:
+        if _sqlite_ready:
+            await asyncio.to_thread(_sqlite_touch_telegram_project_sync, project_id)
+        return
+    async with _pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE telegram_projects SET updated_at = %s WHERE id = %s", (datetime.utcnow(), project_id))

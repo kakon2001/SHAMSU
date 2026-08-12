@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     mysql_database: str = "coding_agent"
     history_db_path: str = "../sessions.db"
     activity_log_path: str = "../logs/activity.log"
+    telegram_bot_token: str = ""
+    telegram_bridge_secret: str = "change-this-telegram-bridge-secret"
+    telegram_poll_interval_seconds: float = 1.0
 
     max_tool_iterations: int = 16
     shell_timeout_seconds: int = 120

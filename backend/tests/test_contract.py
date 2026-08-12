@@ -68,6 +68,7 @@ def test_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
             "MYSQL_HOST": "127.0.0.1",
             "MYSQL_PORT": "1",
             "MODEL_NAME": "qwen3:8b",
+            "TELEGRAM_BRIDGE_SECRET": "pytest-telegram-secret",
         }
     )
     return env
@@ -161,6 +162,52 @@ def test_auth_rejects_weak_password_and_rate_limits_login(backend_server: None) 
             exc.close()
     assert last_code == 429
 
+
+
+
+def test_telegram_project_isolation(backend_server: None) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    first = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "111", "title": "Faculty project one"})
+    second = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "111", "title": "Faculty project two"})
+    other = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "222", "title": "Other user project"})
+
+    first_user_projects = telegram_request("GET", "/api/telegram/users/111/projects")
+    second_user_projects = telegram_request("GET", "/api/telegram/users/222/projects")
+
+    assert {project["id"] for project in first_user_projects} == {first["id"], second["id"]}
+    assert {project["id"] for project in second_user_projects} == {other["id"]}
+
+    with pytest.raises(urllib.error.HTTPError) as forbidden_project:
+        telegram_request("POST", f"/api/telegram/projects/{first['id']}/message", {"telegram_user_id": "222", "message": "Can I see this?"})
+    forbidden_project.value.read()
+    forbidden_project.value.close()
+    assert forbidden_project.value.code == 404
+
+    with pytest.raises(urllib.error.HTTPError) as bad_secret:
+        req = urllib.request.Request(
+            API_BASE + "/api/telegram/users/111/projects",
+            headers={"X-Telegram-Bridge-Secret": "wrong-secret", "Connection": "close"},
+            method="GET",
+        )
+        urllib.request.urlopen(req, timeout=30)
+    bad_secret.value.read()
+    bad_secret.value.close()
+    assert bad_secret.value.code == 401
 
 def test_deployment_profile_uses_safe_env_placeholders() -> None:
     root = Path(__file__).resolve().parents[2]

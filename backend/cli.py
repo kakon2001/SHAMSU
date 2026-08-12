@@ -27,6 +27,8 @@ from app.config import settings
 
 
 DEFAULT_API = "http://127.0.0.1:8080"
+CLI_HISTORY_TIMEOUT_SECONDS = 10
+CLI_HISTORY_RETRIES = 3
 
 
 def request(method: str, url: str, body: dict[str, Any] | None = None, timeout: int = 180) -> Any:
@@ -65,7 +67,6 @@ def log_cli_event(
     base: str,
     action: str,
     summary: str,
-    *,
     target: str | None = None,
     approved: bool | None = None,
     ok: bool = True,
@@ -78,31 +79,37 @@ def log_cli_event(
     risk_reason: str | None = None,
     changed_paths: list[str] | None = None,
 ) -> None:
-    try:
-        session = request("POST", api_url(base, "/api/sessions"), {"title": f"CLI {action}: {target or path or command or 'action'}"[:60]}, timeout=2)
-        request(
-            "POST",
-            api_url(base, f"/api/sessions/{session['id']}/cli-event"),
-            {
-                "action": action,
-                "target": target,
-                "summary": summary,
-                "approved": approved,
-                "ok": ok,
-                "preview": preview,
-                "command": command,
-                "path": path,
-                "diff": diff,
-                "is_new_file": is_new_file,
-                "risk": risk,
-                "risk_reason": risk_reason,
-                "changed_paths": changed_paths or [],
-            },
-            timeout=2,
-        )
-        print(f"[history] recorded in web session {session['id']}")
-    except Exception as exc:
-        print(f"[history warning] {exc}", file=sys.stderr)
+    last_error: Exception | None = None
+    for attempt in range(1, CLI_HISTORY_RETRIES + 1):
+        try:
+            session = request("POST", api_url(base, "/api/sessions"), {"title": f"CLI {action}: {target or path or command or 'action'}"[:60]}, timeout=CLI_HISTORY_TIMEOUT_SECONDS)
+            request(
+                "POST",
+                api_url(base, f"/api/sessions/{session['id']}/cli-event"),
+                {
+                    "action": action,
+                    "target": target,
+                    "summary": summary,
+                    "approved": approved,
+                    "ok": ok,
+                    "preview": preview,
+                    "command": command,
+                    "path": path,
+                    "diff": diff,
+                    "is_new_file": is_new_file,
+                    "risk": risk,
+                    "risk_reason": risk_reason,
+                    "changed_paths": changed_paths or [],
+                },
+                timeout=CLI_HISTORY_TIMEOUT_SECONDS,
+            )
+            print(f"[history] recorded in web session {session['id']}")
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < CLI_HISTORY_RETRIES:
+                time.sleep(0.5)
+    print(f"[history warning] {last_error}", file=sys.stderr)
 
 def print_sessions(base: str) -> None:
     sessions = request("GET", api_url(base, "/api/sessions"))
@@ -214,7 +221,12 @@ def delete_workspace_file(base: str, path: str) -> None:
         print("Rejected. File was not deleted.")
         log_cli_event(base, "delete", f"CLI rejected deleting {path}.", target=path, approved=False, ok=False, command=f"delete {path}", preview="Rejected before deleting.")
         return
-    request("DELETE", api_url(base, f"/api/files/content?{query_path(path)}"))
+    target = tools.resolve_in_workspace(path)
+    if not target.exists():
+        raise RuntimeError(f"{path} does not exist")
+    if target.is_dir():
+        raise RuntimeError(f"{path} is a directory")
+    target.unlink()
     message = f"Deleted {path}."
     print(message)
     log_cli_event(base, "delete", f"CLI deleted {path}.", target=path, approved=True, command=f"delete {path}", changed_paths=[path], preview=message)
