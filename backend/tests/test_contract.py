@@ -1007,6 +1007,20 @@ def test_website_prompt_creates_previewable_site(tmp_path: Path, monkeypatch: py
     assert "Requirement Analysis" in workflow
 
 
+def test_generic_database_app_prompt_creates_fastapi_sqlite_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool with database")
+
+    assert plan.mode == "generic-database-app-builder"
+    assert "FastAPI" in plan.stack
+    assert "SQLite" in plan.stack
+    assert "flashcard_tool_database_app/backend/app.py" in created
+    assert "flashcard_tool_database_app/schema.sql" in created
+    assert "flashcard_tool_database_app/seed.sql" in created
+    assert "flashcard_tool_database_app/tests/test_api.py" in created
+    assert "CREATE TABLE" in (tmp_path / "flashcard_tool_database_app" / "schema.sql").read_text(encoding="utf-8")
+    assert "TestClient" in (tmp_path / "flashcard_tool_database_app" / "tests" / "test_api.py").read_text(encoding="utf-8")
+    assert "requirements -> database schema" in plan.workflow_summary
+
 def test_generic_app_prompt_creates_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool")
 
@@ -1029,6 +1043,20 @@ def test_generic_app_prompt_creates_multi_file_project(tmp_path: Path, monkeypat
     assert "Flashcard Tool" in html
     assert "localStorage" in app_js
     assert "Requirement analysis" in workflow
+
+def test_generic_database_app_prompt_creates_fastapi_sqlite_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool with database")
+
+    assert plan.mode == "generic-database-app-builder"
+    assert "FastAPI" in plan.stack
+    assert "SQLite" in plan.stack
+    assert "flashcard_tool_database_app/backend/app.py" in created
+    assert "flashcard_tool_database_app/schema.sql" in created
+    assert "flashcard_tool_database_app/seed.sql" in created
+    assert "flashcard_tool_database_app/tests/test_api.py" in created
+    assert "CREATE TABLE" in (tmp_path / "flashcard_tool_database_app" / "schema.sql").read_text(encoding="utf-8")
+    assert "TestClient" in (tmp_path / "flashcard_tool_database_app" / "tests" / "test_api.py").read_text(encoding="utf-8")
+    assert "requirements -> database schema" in plan.workflow_summary
 
 def test_generic_app_prompt_creates_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool")

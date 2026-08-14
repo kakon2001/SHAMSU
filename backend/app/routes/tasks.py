@@ -227,6 +227,8 @@ def build_plan(prompt: str) -> TaskPlanResponse:
         return _full_stack_project_plan(prompt)
     if _looks_like_system_request(lower):
         return _starter_system_plan(prompt)
+    if _wants_database_backing(lower) and _looks_like_build_request(prompt):
+        return _generic_database_app_plan(prompt)
     if _looks_like_build_request(prompt):
         return _generic_multi_file_app_plan(prompt)
     return _general_plan(prompt)
@@ -4084,6 +4086,155 @@ def _calculator_app_plan(prompt: str) -> TaskPlanResponse:
     return TaskPlanResponse(goal=prompt, mode="app-generator", steps=["Create a Calculator HTML app.", "Verify the HTML structure.", "Start preview server."], suggested_files=[{"path": "calculator_app.html", "content": html}], verify_commands=["Open http://127.0.0.1:9000/calculator_app.html"], notes=["This deterministic template is used for calculator app prompts."])
 
 
+
+def _generic_database_app_plan(prompt: str) -> TaskPlanResponse:
+    words = re.findall(r"[a-z0-9]+", prompt.lower())
+    stop = {"make", "build", "create", "generate", "write", "develop", "implement", "a", "an", "the", "for", "me", "with", "database", "db", "sqlite", "backend", "api", "persistent"}
+    title_words = [word for word in words if word not in stop][:5]
+    subject = " ".join(title_words).title() if title_words else "Generated Database App"
+    base = f"{_slug_from_title(subject)}_database_app"
+    schema_sql = """CREATE TABLE IF NOT EXISTS records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Active',
+  owner TEXT NOT NULL DEFAULT 'SHAMSU',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+    seed_sql = f"""INSERT INTO records (title, status, owner, notes) VALUES
+('{subject} demo item', 'Active', 'SHAMSU', 'Seed data generated for the local demo'),
+('Verification item', 'Pending', 'Faculty Demo', 'Used by the API smoke test');
+"""
+    api_py = '''from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = ROOT / "app.db"
+SCHEMA = ROOT / "schema.sql"
+SEED = ROOT / "seed.sql"
+app = FastAPI(title="__TITLE__ API")
+
+class RecordIn(BaseModel):
+    title: str
+    status: str = "Active"
+    owner: str = "SHAMSU"
+    notes: str = ""
+
+def connect() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+def init_db() -> None:
+    with connect() as connection:
+        connection.executescript(SCHEMA.read_text(encoding="utf-8"))
+        total = connection.execute("SELECT COUNT(*) AS total FROM records").fetchone()["total"]
+        if total == 0:
+            connection.executescript(SEED.read_text(encoding="utf-8"))
+        connection.commit()
+
+def row_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "database": str(DB_PATH)}
+
+@app.get("/records")
+def list_records() -> list[dict[str, Any]]:
+    init_db()
+    with connect() as connection:
+        rows = connection.execute("SELECT * FROM records ORDER BY id DESC").fetchall()
+    return [row_dict(row) for row in rows]
+
+@app.post("/records")
+def create_record(record: RecordIn) -> dict[str, Any]:
+    init_db()
+    with connect() as connection:
+        cursor = connection.execute(
+            "INSERT INTO records (title, status, owner, notes) VALUES (?, ?, ?, ?)",
+            (record.title, record.status, record.owner, record.notes),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM records WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return row_dict(row)
+'''.replace("__TITLE__", subject)
+    index_html = f'''<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>{subject}</title><link rel="stylesheet" href="styles.css" /></head>
+<body><main><h1>{subject}</h1><p>Database-backed generated app. Run the FastAPI backend, then use this page as the frontend shell.</p><section id="records"></section></main><script src="app.js"></script></body>
+</html>
+'''
+    css = "body{font-family:Arial,sans-serif;margin:0;background:#f7f8fb;color:#172033}main{max-width:900px;margin:32px auto;padding:20px}section{display:grid;gap:10px}.card{background:white;border:1px solid #dde3ee;border-radius:8px;padding:14px}"
+    js = "fetch('http://127.0.0.1:8090/records').then(r=>r.json()).then(rows=>{document.getElementById('records').innerHTML=rows.map(row=>`<article class=\"card\"><strong>${row.title}</strong><p>${row.status} - ${row.owner}</p><p>${row.notes}</p></article>`).join('')}).catch(()=>{document.getElementById('records').textContent='Start API: python -m uvicorn backend.app:app --reload --port 8090'});"
+    test_py = '''from fastapi.testclient import TestClient
+from backend.app import app, init_db
+
+
+def test_health_and_records():
+    init_db()
+    client = TestClient(app)
+    assert client.get("/health").json()["status"] == "ok"
+    records = client.get("/records").json()
+    assert len(records) >= 1
+    created = client.post("/records", json={"title": "API test record", "status": "Active"}).json()
+    assert created["title"] == "API test record"
+'''
+    readme = f'''# {subject}
+
+Generated by SHAMSU as a database-backed app scaffold.
+
+## Run API
+```powershell
+cd C:\\Users\\HP\\Desktop\\CSE327\\workspace\\{base}
+python -m uvicorn backend.app:app --reload --port 8090
+```
+
+## Run frontend preview
+```powershell
+python -m http.server 9000
+```
+Open http://127.0.0.1:9000/{base}/index.html
+
+## Verify
+```powershell
+python -m pytest tests/test_api.py -q
+```
+'''
+    files = [
+        {"path": f"{base}/backend/__init__.py", "content": "# Generated backend package for SHAMSU.\n"},
+        {"path": f"{base}/backend/app.py", "content": api_py},
+        {"path": f"{base}/schema.sql", "content": schema_sql},
+        {"path": f"{base}/seed.sql", "content": seed_sql},
+        {"path": f"{base}/index.html", "content": index_html},
+        {"path": f"{base}/styles.css", "content": css},
+        {"path": f"{base}/app.js", "content": js},
+        {"path": f"{base}/tests/test_api.py", "content": test_py},
+        {"path": f"{base}/README.md", "content": readme},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="generic-database-app-builder",
+        steps=["Analyze app requirements.", "Choose FastAPI + SQLite.", "Create schema and seed data.", "Create API, frontend shell, and API tests.", "Run pytest and preview."],
+        suggested_files=files,
+        verify_commands=[f"cd {base} && python -m pytest tests/test_api.py -q", f"cd {base} && python -m uvicorn backend.app:app --reload --port 8090"],
+        notes=["Database app prompts now generate a real SQLite/FastAPI backend with schema, seed data, and tests."],
+        requirements_analysis=["The prompt asks for persistence/database support, so SHAMSU creates backend business logic instead of only static HTML."],
+        stack=["FastAPI", "SQLite", "Pydantic", "HTML", "CSS", "JavaScript", "pytest"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="requirements -> database schema -> seed data -> API -> frontend shell -> API tests -> repair -> preview",
+    )
 def _generic_multi_file_app_plan(prompt: str) -> TaskPlanResponse:
     words = re.findall(r"[a-z0-9]+", prompt.lower())
     stop = {"make", "build", "create", "generate", "write", "develop", "implement", "a", "an", "the", "for", "me"}
