@@ -1006,6 +1006,52 @@ def test_website_prompt_creates_previewable_site(tmp_path: Path, monkeypatch: py
     assert "Requirement Analysis" in workflow
 
 
+def test_generic_app_prompt_creates_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool")
+
+    assert plan.mode == "generic-multi-file-app-builder"
+    assert created == [
+        "flashcard_tool/index.html",
+        "flashcard_tool/styles.css",
+        "flashcard_tool/app.js",
+        "flashcard_tool/data.json",
+        "flashcard_tool/WORKFLOW.md",
+        "flashcard_tool/smoke_test.py",
+    ]
+    assert plan.workflow_summary == "requirements -> file plan -> create files -> run smoke test -> repair -> preview"
+    assert "Open http://127.0.0.1:9000/flashcard_tool/index.html" in plan.verify_commands
+    assert "JSON seed data" in plan.stack
+    assert "flashcard_tool/smoke_test.py" in plan.file_plan
+    html = (tmp_path / "flashcard_tool" / "index.html").read_text(encoding="utf-8")
+    app_js = (tmp_path / "flashcard_tool" / "app.js").read_text(encoding="utf-8")
+    workflow = (tmp_path / "flashcard_tool" / "WORKFLOW.md").read_text(encoding="utf-8")
+    assert "Flashcard Tool" in html
+    assert "localStorage" in app_js
+    assert "Requirement analysis" in workflow
+
+def test_generic_app_prompt_creates_multi_file_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "build a flashcard tool")
+
+    assert plan.mode == "generic-multi-file-app-builder"
+    assert created == [
+        "flashcard_tool/index.html",
+        "flashcard_tool/styles.css",
+        "flashcard_tool/app.js",
+        "flashcard_tool/data.json",
+        "flashcard_tool/WORKFLOW.md",
+        "flashcard_tool/smoke_test.py",
+    ]
+    assert plan.workflow_summary == "requirements -> file plan -> create files -> run smoke test -> repair -> preview"
+    assert "Open http://127.0.0.1:9000/flashcard_tool/index.html" in plan.verify_commands
+    assert "JSON seed data" in plan.stack
+    assert "flashcard_tool/smoke_test.py" in plan.file_plan
+    html = (tmp_path / "flashcard_tool" / "index.html").read_text(encoding="utf-8")
+    app_js = (tmp_path / "flashcard_tool" / "app.js").read_text(encoding="utf-8")
+    workflow = (tmp_path / "flashcard_tool" / "WORKFLOW.md").read_text(encoding="utf-8")
+    assert "Flashcard Tool" in html
+    assert "localStorage" in app_js
+    assert "Requirement analysis" in workflow
+
 def test_general_system_prompt_creates_dashboard_prototype(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan, created, _ = _write_and_verify_plan(tmp_path, monkeypatch, "make a clinic system")
 
@@ -1033,13 +1079,14 @@ def test_advisory_build_plan_explains_workflow_before_result() -> None:
     assert plan.file_plan
     assert "Claude-style build" in plan.workflow_summary
 
-def test_general_planner_routes_unknown_game_to_json_fallback() -> None:
+def test_general_planner_routes_unknown_build_to_multi_file_fallback() -> None:
     from app.routes.tasks import build_plan
 
     plan = build_plan("make a maze game")
-    assert plan.mode == "json-generator-fallback"
-    assert plan.suggested_files == []
-    assert "JSON file generator" in " ".join(plan.notes)
+    assert plan.mode == "generic-multi-file-app-builder"
+    assert len(plan.suggested_files) == 6
+    assert "requirements -> file plan" in plan.workflow_summary
+    assert any(item["path"].endswith("/smoke_test.py") for item in plan.suggested_files)
 
 
 def test_generated_file_validation_rejects_unsafe_paths() -> None:

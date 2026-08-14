@@ -228,7 +228,7 @@ def build_plan(prompt: str) -> TaskPlanResponse:
     if _looks_like_system_request(lower):
         return _starter_system_plan(prompt)
     if _looks_like_build_request(prompt):
-        return _generated_task_plan(prompt)
+        return _generic_multi_file_app_plan(prompt)
     return _general_plan(prompt)
 
 
@@ -883,7 +883,7 @@ def _default_workflow_summary(plan: TaskPlanResponse, subject: str) -> str:
 def _looks_like_build_request(prompt: str) -> bool:
     text = prompt.lower()
     return bool(re.search(r"\b(make|build|create|generate|write|develop|implement)\b", text)) and bool(
-        re.search(r"\b(game|app|application|website|web page|html|system|tool|program|project|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b", text)
+        re.search(r"\b(game|app|application|website|web page|html|system|tool|program|project|platform|service|marketplace|tracker|planner|booking|calculator|todo|quiz|crm|management|dashboard|portal|inventory|student|library|os|operating system)\b", text)
     )
 
 
@@ -892,7 +892,7 @@ def _looks_like_website_request(text: str) -> bool:
 
 
 def _looks_like_system_request(text: str) -> bool:
-    return bool(re.search(r"\b(system|dashboard|portal|application|app)\b", text)) and not any(
+    return bool(re.search(r"\b(system|dashboard|portal|application|app|platform|service|marketplace|tracker|planner|booking)\b", text)) and not any(
         word in text for word in ["game", "calculator", "todo", "quiz"]
     )
 
@@ -919,8 +919,10 @@ async def _generate_json_file_plan(prompt: str, steps: list[TaskRunStep]) -> lis
     system = (
         "You generate small coding project files. Return ONLY valid JSON with this exact shape: "
         "{\"files\":[{\"path\":\"relative/path.ext\",\"content\":\"full file content\"}],\"notes\":[\"...\"]}. "
-        "Use relative paths only. Do not use markdown fences. Prefer one runnable HTML file for browser games, "
-        "or a small Python/C project when requested. Keep the project compact."
+        "Use relative paths only. Do not use markdown fences. For app, system, website, CRM, portal, "
+        "dashboard, marketplace, or management prompts, prefer a small multi-file project with HTML, CSS, JS, "
+        "data/seed content, documentation, and a smoke test. One runnable HTML file is acceptable only when the "
+        "user explicitly asks for one file or a very small browser game."
     )
     user = f"Create the files for this request: {prompt}"
     try:
@@ -4081,6 +4083,150 @@ def _calculator_app_plan(prompt: str) -> TaskPlanResponse:
 """
     return TaskPlanResponse(goal=prompt, mode="app-generator", steps=["Create a Calculator HTML app.", "Verify the HTML structure.", "Start preview server."], suggested_files=[{"path": "calculator_app.html", "content": html}], verify_commands=["Open http://127.0.0.1:9000/calculator_app.html"], notes=["This deterministic template is used for calculator app prompts."])
 
+
+def _generic_multi_file_app_plan(prompt: str) -> TaskPlanResponse:
+    words = re.findall(r"[a-z0-9]+", prompt.lower())
+    stop = {"make", "build", "create", "generate", "write", "develop", "implement", "a", "an", "the", "for", "me"}
+    title_words = [word for word in words if word not in stop][:5]
+    subject = " ".join(title_words).title() if title_words else "Generated App"
+    slug = _slug_from_title(subject)
+    base = slug
+    data = {
+        "project": subject,
+        "records": [
+            {"id": 1, "name": "Demo record", "status": "Active", "owner": "SHAMSU"},
+            {"id": 2, "name": "Review item", "status": "Pending", "owner": "Faculty Demo"},
+        ],
+        "workflow": ["requirements", "file plan", "create files", "verify", "preview"],
+    }
+    index_html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{subject}</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">SHAMSU generated app</p>
+      <h1>{subject}</h1>
+    </div>
+    <button id="addRecord">Add demo item</button>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>Requirement Analysis</h2>
+      <p id="summary">This app was generated from the prompt and organized as a multi-file project.</p>
+    </section>
+    <section class="panel">
+      <h2>Dashboard</h2>
+      <div id="stats" class="stats"></div>
+    </section>
+    <section class="panel">
+      <h2>Records</h2>
+      <input id="search" placeholder="Search records" />
+      <div id="records" class="records"></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
+"""
+    styles_css = """* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, sans-serif; background: #f6f7fb; color: #172033; }
+.topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 24px; background: #ffffff; border-bottom: 1px solid #dde3ee; }
+.eyebrow { margin: 0 0 6px; color: #6d28d9; font-weight: 700; }
+h1 { margin: 0; font-size: 28px; }
+button { border: 0; background: #7c3aed; color: white; padding: 12px 16px; border-radius: 8px; cursor: pointer; }
+main { width: min(1100px, calc(100% - 32px)); margin: 24px auto; display: grid; gap: 16px; }
+.panel { background: white; border: 1px solid #dde3ee; border-radius: 8px; padding: 18px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat, .record { border: 1px solid #dde3ee; border-radius: 8px; padding: 14px; background: #fbfcff; }
+#search { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 12px; }
+.records { display: grid; gap: 10px; }
+@media (max-width: 700px) { .topbar { align-items: flex-start; flex-direction: column; } }
+"""
+    app_js = f"""const seed = {json.dumps(data, indent=2)};
+const recordsEl = document.getElementById('records');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('search');
+const addButton = document.getElementById('addRecord');
+let records = JSON.parse(localStorage.getItem('{slug}:records') || JSON.stringify(seed.records));
+function save() {{ localStorage.setItem('{slug}:records', JSON.stringify(records)); }}
+function render() {{
+  const query = searchEl.value.trim().toLowerCase();
+  const visible = records.filter((item) => item.name.toLowerCase().includes(query) || item.status.toLowerCase().includes(query));
+  statsEl.innerHTML = `
+    <div class="stat"><strong>${{records.length}}</strong><span>Total records</span></div>
+    <div class="stat"><strong>${{records.filter((item) => item.status === 'Active').length}}</strong><span>Active</span></div>
+    <div class="stat"><strong>${{records.filter((item) => item.status === 'Pending').length}}</strong><span>Pending</span></div>`;
+  recordsEl.innerHTML = visible.map((item) => `<article class="record"><strong>${{item.name}}</strong><p>Status: ${{item.status}}</p><p>Owner: ${{item.owner}}</p></article>`).join('');
+}}
+addButton.addEventListener('click', () => {{
+  records.push({{ id: Date.now(), name: 'Generated item ' + (records.length + 1), status: 'Pending', owner: 'Local user' }});
+  save();
+  render();
+}});
+searchEl.addEventListener('input', render);
+render();
+"""
+    workflow_md = f"""# {subject} Workflow
+
+SHAMSU handles this prompt as a multi-file app build.
+
+1. Requirement analysis
+2. File plan
+3. Create files
+4. Run smoke verification
+5. Repair from failures if needed
+6. Preview locally
+
+Preview: http://127.0.0.1:9000/{base}/index.html
+"""
+    smoke_py = f"""from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+required = ["index.html", "styles.css", "app.js", "data.json", "WORKFLOW.md"]
+for name in required:
+    path = ROOT / name
+    assert path.exists(), f"missing {{name}}"
+html = (ROOT / "index.html").read_text(encoding="utf-8")
+assert "{subject}" in html
+assert "app.js" in html
+assert "styles.css" in html
+print("smoke passed")
+"""
+    files = [
+        {"path": f"{base}/index.html", "content": index_html},
+        {"path": f"{base}/styles.css", "content": styles_css},
+        {"path": f"{base}/app.js", "content": app_js},
+        {"path": f"{base}/data.json", "content": json.dumps(data, indent=2)},
+        {"path": f"{base}/WORKFLOW.md", "content": workflow_md},
+        {"path": f"{base}/smoke_test.py", "content": smoke_py},
+    ]
+    return TaskPlanResponse(
+        goal=prompt,
+        mode="generic-multi-file-app-builder",
+        steps=[
+            "Analyze requirements from the prompt.",
+            "Choose a local HTML/CSS/JavaScript stack with JSON seed data.",
+            "Create a multi-file project instead of a single loose HTML file.",
+            "Run smoke verification and repair if a file is missing or broken.",
+            "Open the generated preview URL.",
+        ],
+        suggested_files=files,
+        verify_commands=[f"python {base}/smoke_test.py", f"Open http://127.0.0.1:9000/{base}/index.html"],
+        notes=["Generic app prompts now use SHAMSU's multi-file build-and-verify workflow."],
+        requirements_analysis=[
+            "Convert the user request into pages, state, data, and verification needs.",
+            "Keep the first version runnable locally while leaving clear next steps for backend/database upgrades.",
+        ],
+        stack=["HTML", "CSS", "JavaScript", "JSON seed data", "Python smoke test", "local preview server"],
+        file_plan=[item["path"] for item in files],
+        workflow_summary="requirements -> file plan -> create files -> run smoke test -> repair -> preview",
+    )
 def _generated_task_plan(prompt: str) -> TaskPlanResponse:
     return TaskPlanResponse(
         goal=prompt,
@@ -4163,3 +4309,4 @@ def _general_plan(prompt: str) -> TaskPlanResponse:
         verify_commands=["python -m pytest -q"],
         notes=["This is a planning scaffold for chat/tool mode."],
     )
+
