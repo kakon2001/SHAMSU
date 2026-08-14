@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from io import BytesIO
 import json
 import os
 import socket
@@ -1106,23 +1107,6 @@ def test_admin_dashboard_groups_user_generated_files_without_upload_leakage() ->
     assert "uploads/private.pdf" not in projects[0]["generated_files"]
     assert _overall_verification_status([{"verification_status": "verified"}, {"verification_status": "needs repair"}]) == {"verified": 1, "needs repair": 1}
 
-def test_admin_dashboard_groups_user_generated_files_without_upload_leakage() -> None:
-    from app.routes.admin import _local_projects_from_files, _overall_verification_status
-
-    files = [
-        {"path": "crm_system/index.html", "session_id": "s1", "session_title": "CRM"},
-        {"path": "crm_system/tests/smoke_test.py", "session_id": "s1", "session_title": "CRM"},
-        {"path": "uploads/private.pdf", "session_id": "s1", "session_title": "CRM"},
-    ]
-    projects = _local_projects_from_files(files)
-
-    assert len(projects) == 1
-    assert projects[0]["path"] == "crm_system"
-    assert projects[0]["previewable"] is True
-    assert projects[0]["verification_status"] == "has smoke test"
-    assert "uploads/private.pdf" not in projects[0]["generated_files"]
-    assert _overall_verification_status([{"verification_status": "verified"}, {"verification_status": "needs repair"}]) == {"verified": 1, "needs repair": 1}
-
 def test_generated_file_validation_rejects_unsafe_paths() -> None:
     from app.routes.tasks import _validated_generated_files, TaskRunStep
 
@@ -1264,6 +1248,27 @@ def test_upload_returns_metadata_and_writes_context_file(tmp_path: Path, monkeyp
 
 
 
+
+def test_upload_prd_returns_build_mode_analysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import UploadFile
+    from app.routes import uploads
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(uploads.settings, "agent_workdir", str(workspace))
+    text = """OpenBazaar PRD requirements
+Roles: Guest, Buyer, Seller, Admin.
+Entities: users, categories, items, bids, orders.
+Workflows: register, login, search, auction, checkout, cash on delivery.
+Pages: homepage, product page, seller dashboard, buyer dashboard, admin.
+Security: password hashing, OTP, rate limit, role-based access.
+"""
+    result = asyncio.run(uploads.upload_context_file(UploadFile(filename="OpenBazaar_PRD.txt", file=BytesIO(text.encode("utf-8")))))
+
+    assert result["prd_analysis"]["is_prd"] is True
+    assert "Do you want me to build Step 1" in result["prd_analysis"]["message"]
+    assert "buyer" in result["prd_analysis"]["found"]["roles"]
+    assert result["suggested_prompts"][1].startswith("Build Step 1")
 
 def test_upload_accepts_docx_and_extracts_paragraphs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("docx")

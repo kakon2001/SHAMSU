@@ -780,60 +780,6 @@ function App() {
                 </div>
               </div>
             </div>
-          </div>          <div className="dashboard-git">
-            <div className="dashboard-panel__header">
-              <strong>Persistent Project Dashboard</strong>
-              <span>your saved sessions and generated artifacts</span>
-            </div>
-            <div className="dashboard-grid">
-              <div className="dashboard-card"><span className="dashboard-card__label">Local Projects</span><strong>{adminOverview?.persistent_dashboard?.local_projects.length ?? 0}</strong></div>
-              <div className="dashboard-card"><span className="dashboard-card__label">Telegram Projects</span><strong>{adminOverview?.persistent_dashboard?.telegram_projects.project_count ?? 0}</strong></div>
-              <div className="dashboard-card"><span className="dashboard-card__label">Generated Files</span><strong>{adminOverview?.persistent_dashboard?.generated_files.length ?? 0}</strong></div>
-              <div className="dashboard-card"><span className="dashboard-card__label">Project Uploads</span><strong>{adminOverview?.persistent_dashboard?.uploads.length ?? 0}</strong></div>
-            </div>
-            <div className="dashboard-columns">
-              <div>
-                <h3>Local Web Projects</h3>
-                <div className="dashboard-list">
-                  {(adminOverview?.persistent_dashboard?.local_projects ?? []).slice(0, 8).map((project) => (
-                    <button key={project.path} className="report-history-item" onClick={() => project.previewable ? openFile(project.generated_files.find((path) => path.endsWith("index.html") || path.endsWith(".html")) || project.generated_files[0]) : undefined}>
-                      <strong>{project.name}</strong>
-                      <span>{project.files} files - {project.verification_status}</span>
-                    </button>
-                  ))}
-                  {adminOverview?.persistent_dashboard && adminOverview.persistent_dashboard.local_projects.length === 0 && <div>No generated projects recorded for this signed-in user yet.</div>}
-                </div>
-              </div>
-              <div>
-                <h3>Project Evidence</h3>
-                <div className="dashboard-list">
-                  {(adminOverview?.persistent_dashboard?.generated_files ?? []).slice(0, 8).map((file) => (
-                    <div key={`${file.session_id}-${file.path}`}>{file.path} - {file.session_title}</div>
-                  ))}
-                  {adminOverview?.persistent_dashboard && adminOverview.persistent_dashboard.generated_files.length === 0 && <div>No generated files recorded yet.</div>}
-                </div>
-                <h3>Verification Status</h3>
-                <div className="dashboard-terms">
-                  {Object.entries(adminOverview?.persistent_dashboard?.verification_status ?? {}).map(([status, count]) => <span key={status}>{status}: {count}</span>)}
-                </div>
-              </div>
-            </div>
-            <div className="dashboard-columns">
-              <div>
-                <h3>Telegram Summary</h3>
-                <div className="dashboard-list">
-                  <div>{adminOverview?.persistent_dashboard?.telegram_projects.project_count ?? 0} private Telegram projects across {adminOverview?.persistent_dashboard?.telegram_projects.user_count ?? 0} Telegram users.</div>
-                  <div>Detailed Telegram project history stays private inside each Telegram account.</div>
-                </div>
-              </div>
-              <div>
-                <h3>Uploaded Files In Your Sessions</h3>
-                <div className="dashboard-list">
-                  {(adminOverview?.persistent_dashboard?.uploads ?? []).slice(0, 6).map((upload) => <div key={`${upload.session_id}-${upload.path}`}>{upload.path} - {upload.session_title}</div>)}
-                  {adminOverview?.persistent_dashboard && adminOverview.persistent_dashboard.uploads.length === 0 && <div>No uploaded files recorded for this user yet.</div>}
-                </div>
-              </div>
-            </div>
           </div>          <div className="dashboard-git demo-control-panel">
             <div className="dashboard-panel__header">
               <strong>Build, Verify, Export</strong>

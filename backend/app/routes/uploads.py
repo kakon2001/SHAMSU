@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import uuid
@@ -58,6 +58,7 @@ async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]
         raise HTTPException(status_code=400, detail="No readable text could be extracted")
 
     context_path = _write_context_file(raw_name, text)
+    prd_analysis = _prd_analysis(raw_name, text)
     return {
         "name": raw_name,
         "path": context_path,
@@ -69,7 +70,8 @@ async def upload_context_file(file: UploadFile = File(...)) -> dict[str, object]
         "extension": suffix.lstrip(".") or "text",
         "summary": _upload_summary(raw_name, text),
         "preview": _preview_text(text),
-        "suggested_prompts": _suggested_prompts(raw_name, suffix),
+        "suggested_prompts": _suggested_prompts(raw_name, suffix, prd_analysis),
+        "prd_analysis": prd_analysis,
     }
 
 
@@ -142,12 +144,18 @@ def _extract_docx_text(data: bytes) -> str:
     return "\n\n".join(paragraphs + table_lines)
 
 
-def _suggested_prompts(name: str, suffix: str) -> list[str]:
+def _suggested_prompts(name: str, suffix: str, prd_analysis: dict[str, object] | None = None) -> list[str]:
     label = "this uploaded file"
     if suffix == ".pdf":
         label = "this uploaded PDF"
     elif suffix == ".docx":
         label = "this uploaded Word document"
+    if prd_analysis:
+        return [
+            f"Read {label} and confirm the roles, entities, workflows, database tables, pages, and security rules. Do not create files yet.",
+            f"Build Step 1 from {label}: create the requirements analysis and roadmap files only.",
+            f"Build Step 2 from {label}: create the file plan and first verified MVP scaffold.",
+        ]
     return [
         f"Summarize {label} and list the main requirements.",
         f"Find action items and missing details in {label}.",
@@ -167,4 +175,28 @@ def _preview_text(text: str, max_chars: int = 500) -> str:
         return compact[:max_chars].rstrip() + "..."
     return compact
 
-
+def _prd_analysis(name: str, text: str) -> dict[str, object] | None:
+    lower = f"{name}\n{text}".lower()
+    if "prd" not in lower and "product requirement" not in lower and "requirements" not in lower:
+        return None
+    categories = {
+        "roles": ["guest", "buyer", "seller", "admin", "user", "manager", "courier", "staff"],
+        "entities": ["user", "category", "item", "product", "bid", "order", "cart", "payment", "store", "audit", "student", "customer"],
+        "workflows": ["register", "login", "search", "checkout", "auction", "bid", "cod", "cash on delivery", "approval", "moderation", "delivery"],
+        "database_tables": ["users", "categories", "items", "products", "bids", "orders", "sessions", "audit", "cart", "stores"],
+        "pages": ["homepage", "dashboard", "product page", "admin", "seller", "buyer", "login", "register", "checkout", "orders"],
+        "security_rules": ["password", "hash", "rate limit", "otp", "tls", "validation", "fraud", "auth", "role-based"],
+    }
+    found: dict[str, list[str]] = {}
+    for key, terms in categories.items():
+        matches = [term for term in terms if term in lower]
+        found[key] = matches[:10]
+    score = sum(len(values) for values in found.values())
+    if score < 3:
+        return None
+    return {
+        "is_prd": True,
+        "message": "I found roles, entities, workflows, database tables, pages, and security rules. Do you want me to build Step 1?",
+        "found": found,
+        "next_step_prompt": f"Build Step 1 from uploaded PRD {name}: create requirements analysis, roadmap, file plan, and verification checklist. Do not build final files yet.",
+    }

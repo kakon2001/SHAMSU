@@ -1,4 +1,4 @@
-﻿.app {
+.app {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1736,4 +1736,25 @@
   .chat-panel__status-strip span {
     white-space: normal;
   }
+}
+.chat-panel__prd-analysis {
+  border: 1px solid #c4b5fd;
+  background: #faf5ff;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.chat-panel__prd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.chat-panel__prd-grid span {
+  background: #fff;
+  border: 1px solid #e9d5ff;
+  border-radius: 6px;
+  padding: 6px;
 }

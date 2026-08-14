@@ -32,6 +32,12 @@ export interface UploadedContextFile {
   lines?: number;
   bytes?: number;
   suggested_prompts?: string[];
+  prd_analysis?: {
+    is_prd: boolean;
+    message: string;
+    found: Record<string, string[]>;
+    next_step_prompt: string;
+  } | null;
 }
 
 /** Events recorded by the backend agent session. */

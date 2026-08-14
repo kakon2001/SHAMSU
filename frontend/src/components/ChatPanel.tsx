@@ -248,6 +248,17 @@ export function ChatPanel({
         <div className={`chat-panel__upload-status chat-panel__upload-status--${uploadStatus.kind}`}>
           <strong>{uploadStatus.text}</strong>
           {uploadStatus.file?.preview && <p>{uploadStatus.file.preview}</p>}
+          {uploadStatus.file?.prd_analysis && (
+            <div className="chat-panel__prd-analysis">
+              <strong>{uploadStatus.file.prd_analysis.message}</strong>
+              <div className="chat-panel__prd-grid">
+                {Object.entries(uploadStatus.file.prd_analysis.found).map(([key, values]) => (
+                  <span key={key}>{key.replace("_", " ")}: {values.length ? values.join(", ") : "not found yet"}</span>
+                ))}
+              </div>
+              <button type="button" onClick={() => setInput(uploadStatus.file?.prd_analysis?.next_step_prompt ?? "")}>Build Step 1</button>
+            </div>
+          )}
           {uploadStatus.file?.suggested_prompts?.length ? (
             <div className="chat-panel__upload-suggestions">
               {uploadStatus.file.suggested_prompts.map((prompt) => (
