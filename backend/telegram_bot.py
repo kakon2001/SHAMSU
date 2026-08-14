@@ -37,6 +37,7 @@ BRIDGE_SECRET = os.getenv("TELEGRAM_BRIDGE_SECRET", "").strip()
 POLL_INTERVAL = float(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "1.0"))
 TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 _SELECTED_PROJECT: dict[str, str] = {}
+_PENDING_APPROVAL: dict[str, dict[str, str]] = {}
 
 
 def telegram_request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -114,6 +115,39 @@ def upload_document(user_id: str, project_id: str, filename: str, data: bytes) -
     return result.get("reply") or f"Uploaded and indexed {filename}."
 
 
+def approve_project(user_id: str, project_id: str, approval_id: str, approved: bool) -> dict[str, Any]:
+    return shamsu_request(
+        "POST",
+        f"/api/telegram/projects/{project_id}/approval",
+        {"telegram_user_id": user_id, "approval_id": approval_id, "approved": approved},
+    )
+
+
+def remember_pending_approval(user_id: str, project_id: str, response: dict[str, Any]) -> None:
+    for event in reversed(response.get("events") or []):
+        if event.get("type") == "approval_request" and event.get("id"):
+            _PENDING_APPROVAL[user_id] = {"project_id": project_id, "approval_id": str(event["id"])}
+            return
+    if not response.get("busy"):
+        _PENDING_APPROVAL.pop(user_id, None)
+
+
+def handle_approval_reply(chat_id: int, user_id: str, text: str) -> bool:
+    normalized = text.strip().lower()
+    if normalized not in {"yes", "y", "approve", "approved", "ok approve", "no", "n", "reject", "rejected", "deny"}:
+        return False
+    pending = _PENDING_APPROVAL.get(user_id)
+    if not pending:
+        return False
+    approved = normalized in {"yes", "y", "approve", "approved", "ok approve"}
+    response = approve_project(user_id, pending["project_id"], pending["approval_id"], approved)
+    remember_pending_approval(user_id, pending["project_id"], response)
+    if not response.get("busy"):
+        _PENDING_APPROVAL.pop(user_id, None)
+    send_message(chat_id, response.get("reply") or ("Approved." if approved else "Rejected."))
+    return True
+
+
 def stop_selected_project(user_id: str, project_id: str) -> str:
     query = urllib.parse.urlencode({"telegram_user_id": user_id})
     result = shamsu_request("POST", f"/api/telegram/projects/{project_id}/stop?{query}")
@@ -132,6 +166,8 @@ def selected_or_latest_project(user_id: str) -> dict[str, Any] | None:
 
 def handle_text(chat_id: int, user_id: str, text: str) -> None:
     text = text.strip()
+    if handle_approval_reply(chat_id, user_id, text):
+        return
     if text in {"/start", "help", "/help"}:
         send_message(chat_id, "SHAMSU Telegram bridge\n/new Project name - create private project\n/projects - list your projects\n/use <project_id> - select project\n/history - show selected project history\n/stop - stop a busy project\nAttach PDF/DOCX/TXT/MD/PRD files to index them.\nThen send any prompt to the selected project.")
         return
@@ -163,6 +199,7 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
         if project is None:
             send_message(chat_id, "No SHAMSU project selected yet. Send /new Project name first.")
             return
+        _PENDING_APPROVAL.pop(user_id, None)
         send_message(chat_id, stop_selected_project(user_id, project["id"]))
         return
     if text.startswith("/use "):
@@ -187,6 +224,7 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
         f"/api/telegram/projects/{project['id']}/message",
         {"telegram_user_id": user_id, "message": text},
     )
+    remember_pending_approval(user_id, project["id"], response)
     send_message(chat_id, response.get("reply") or "SHAMSU finished, but no text reply was produced. Send /history to see project history.")
 def handle_document(chat_id: int, user_id: str, document: dict[str, Any]) -> None:
     project = selected_or_latest_project(user_id)

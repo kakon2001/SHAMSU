@@ -34,6 +34,12 @@ class TelegramDocumentRequest(BaseModel):
     data_base64: str = Field(min_length=1)
 
 
+class TelegramApprovalRequest(BaseModel):
+    telegram_user_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    approved: bool
+
+
 class TelegramDocumentResponse(BaseModel):
     project: TelegramProject
     name: str
@@ -156,11 +162,39 @@ async def send_project_message(
         session.start_turn(message, context_files=context_files, context_file_labels=context_labels)
         await session.wait_for_pause()
         events = session.drain()
-        reply = _last_assistant_reply(events) or _history_summary(session.full_state()[-8:]) or "SHAMSU recorded the prompt. Send /history to see this project history."
+        reply = _reply_from_events(events) or _history_summary(session.full_state()[-8:]) or "SHAMSU recorded the prompt. Send /history to see this project history."
     await db.touch_telegram_project(project_id)
     refreshed = await db.get_telegram_project(project_id, telegram_user_id) or project
     return TelegramMessageResponse(project=_project_response(refreshed), reply=reply, busy=session.busy, events=events)
 
+
+
+
+@router.post("/projects/{project_id}/approval", response_model=TelegramMessageResponse)
+async def resolve_project_approval(
+    project_id: str,
+    body: TelegramApprovalRequest,
+    x_telegram_bridge_secret: str | None = Header(default=None),
+) -> TelegramMessageResponse:
+    _require_bridge_secret(x_telegram_bridge_secret)
+    telegram_user_id = body.telegram_user_id.strip()
+    project = await db.get_telegram_project(project_id, telegram_user_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Telegram project not found for this user")
+    session = manager.get(project["session_id"])
+    if session is None or session.owner_id != _owner_id(telegram_user_id):
+        raise HTTPException(status_code=404, detail="Telegram project session not found")
+    if not session.busy:
+        raise HTTPException(status_code=409, detail="No running approval is waiting in this project")
+
+    session.resolve_approval(body.approval_id, body.approved)
+    await session.wait_for_pause()
+    events = session.drain()
+    await db.touch_telegram_project(project_id)
+    refreshed = await db.get_telegram_project(project_id, telegram_user_id) or project
+    action = "approved" if body.approved else "rejected"
+    reply = _reply_from_events(events) or f"Approval {action}. SHAMSU is continuing the project task."
+    return TelegramMessageResponse(project=_project_response(refreshed), reply=reply, busy=session.busy, events=events)
 
 
 @router.post("/projects/{project_id}/document", response_model=TelegramDocumentResponse)
@@ -254,11 +288,44 @@ async def stop_project_turn(
         return TelegramStopResponse(project=_project_response(project), stopped=True, message="Stopped the running SHAMSU task for this project.")
     return TelegramStopResponse(project=_project_response(project), stopped=False, message="No running SHAMSU task in this project.")
 
+def _reply_from_events(events: list[dict[str, Any]]) -> str:
+    approval = _last_approval_request(events)
+    if approval:
+        return _format_approval_request(approval)
+    return _last_assistant_reply(events)
+
+
 def _last_assistant_reply(events: list[dict[str, Any]]) -> str:
     for event in reversed(events):
         if event.get("type") == "assistant_message" and event.get("content"):
             return str(event["content"])
     return ""
+
+
+def _last_approval_request(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.get("type") == "approval_request" and event.get("id"):
+            return event
+    return None
+
+
+def _format_approval_request(event: dict[str, Any]) -> str:
+    name = str(event.get("name") or "approval")
+    approval_id = str(event.get("id") or "")
+    if event.get("command"):
+        detail = f"Command: {event.get('command')}\nRisk: {event.get('risk') or 'unknown'} - {event.get('risk_reason') or 'review before approving'}"
+    else:
+        path = event.get("path") or "file"
+        action = "creating" if event.get("is_new_file") else "writing"
+        diff = str(event.get("diff") or "")[:1200]
+        detail = f"Approve {action} `{path}`?\nDiff preview:\n{diff}"
+    return (
+        "Approval required in SHAMSU Telegram.\n"
+        f"Tool: {name}\n"
+        f"Approval ID: {approval_id}\n"
+        f"{detail}\n\n"
+        "Reply `yes` to approve or `no` to reject."
+    )
 
 
 def _history_summary(events: list[dict[str, Any]]) -> str:

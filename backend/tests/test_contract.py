@@ -351,6 +351,57 @@ def test_telegram_natural_code_prompts_follow_user_request(backend_server: None,
 
 
 
+
+
+def test_telegram_approval_reply_format_includes_yes_no() -> None:
+    from app.routes.telegram import _format_approval_request
+
+    reply = _format_approval_request(
+        {
+            "type": "approval_request",
+            "id": "abc123",
+            "name": "write_file",
+            "path": "app.py",
+            "diff": "--- a/app.py\n+++ b/app.py",
+            "is_new_file": True,
+        }
+    )
+
+    assert "Approval required" in reply
+    assert "app.py" in reply
+    assert "abc123" in reply
+    assert "Reply `yes`" in reply
+    assert "`no`" in reply
+
+
+def test_telegram_approval_requires_running_pending_turn(backend_server: None) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "448", "title": "Approval route"})
+    with pytest.raises(urllib.error.HTTPError) as error:
+        telegram_request(
+            "POST",
+            f"/api/telegram/projects/{project['id']}/approval",
+            {"telegram_user_id": "448", "approval_id": "missing", "approved": True},
+        )
+    error.value.read()
+    error.value.close()
+    assert error.value.code == 409
+
 def test_telegram_document_upload_indexes_prd_context(backend_server: None, test_env: dict[str, str]) -> None:
     def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         data = json.dumps(body).encode("utf-8") if body is not None else None
