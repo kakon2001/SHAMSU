@@ -535,6 +535,14 @@ def _sqlite_list_telegram_projects_sync(telegram_user_id: str) -> list[dict[str,
         ).fetchall()
     return [_telegram_project_row(row) for row in rows]
 
+def _sqlite_list_all_telegram_projects_sync(limit: int = 50) -> list[dict[str, Any]]:
+    with _sqlite_connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM telegram_projects ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_telegram_project_row(row) for row in rows]
+
 
 def _sqlite_get_telegram_project_sync(project_id: str, telegram_user_id: str) -> dict[str, Any] | None:
     with _sqlite_connect() as conn:
@@ -548,6 +556,18 @@ def _sqlite_get_telegram_project_sync(project_id: str, telegram_user_id: str) ->
 def _sqlite_touch_telegram_project_sync(project_id: str) -> None:
     with _sqlite_connect() as conn:
         conn.execute("UPDATE telegram_projects SET updated_at = ? WHERE id = ?", (datetime.utcnow().isoformat(), project_id))
+
+def _sqlite_telegram_project_stats_sync() -> dict[str, Any]:
+    with _sqlite_connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS project_count, COUNT(DISTINCT telegram_user_id) AS user_count, MAX(updated_at) AS latest_updated_at FROM telegram_projects"
+        ).fetchone()
+    data = dict(row) if row else {}
+    return {
+        "project_count": int(data.get("project_count") or 0),
+        "user_count": int(data.get("user_count") or 0),
+        "latest_updated_at": data.get("latest_updated_at"),
+    }
 
 
 async def create_telegram_project(telegram_user_id: str, title: str, session_id: str) -> dict[str, Any]:
@@ -585,6 +605,18 @@ async def list_telegram_projects(telegram_user_id: str) -> list[dict[str, Any]]:
             rows = await cur.fetchall()
     return [_telegram_project_row(row) for row in rows]
 
+async def list_all_telegram_projects(limit: int = 50) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 200))
+    if _pool is None:
+        if not _sqlite_ready:
+            return []
+        return await asyncio.to_thread(_sqlite_list_all_telegram_projects_sync, safe_limit)
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("SELECT * FROM telegram_projects ORDER BY updated_at DESC LIMIT %s", (safe_limit,))
+            rows = await cur.fetchall()
+    return [_telegram_project_row(row) for row in rows]
+
 
 async def get_telegram_project(project_id: str, telegram_user_id: str) -> dict[str, Any] | None:
     telegram_user_id = str(telegram_user_id).strip()
@@ -610,3 +642,19 @@ async def touch_telegram_project(project_id: str) -> None:
     async with _pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute("UPDATE telegram_projects SET updated_at = %s WHERE id = %s", (datetime.utcnow(), project_id))
+async def telegram_project_stats() -> dict[str, Any]:
+    if _pool is None:
+        if not _sqlite_ready:
+            return {"project_count": 0, "user_count": 0, "latest_updated_at": None}
+        return await asyncio.to_thread(_sqlite_telegram_project_stats_sync)
+    async with _pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT COUNT(*) AS project_count, COUNT(DISTINCT telegram_user_id) AS user_count, MAX(updated_at) AS latest_updated_at FROM telegram_projects"
+            )
+            row = await cur.fetchone()
+    return {
+        "project_count": int((row or {}).get("project_count") or 0),
+        "user_count": int((row or {}).get("user_count") or 0),
+        "latest_updated_at": (row or {}).get("latest_updated_at"),
+    }

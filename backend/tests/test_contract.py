@@ -1089,6 +1089,40 @@ def test_general_planner_routes_unknown_build_to_multi_file_fallback() -> None:
     assert any(item["path"].endswith("/smoke_test.py") for item in plan.suggested_files)
 
 
+def test_admin_dashboard_groups_user_generated_files_without_upload_leakage() -> None:
+    from app.routes.admin import _local_projects_from_files, _overall_verification_status
+
+    files = [
+        {"path": "crm_system/index.html", "session_id": "s1", "session_title": "CRM"},
+        {"path": "crm_system/tests/smoke_test.py", "session_id": "s1", "session_title": "CRM"},
+        {"path": "uploads/private.pdf", "session_id": "s1", "session_title": "CRM"},
+    ]
+    projects = _local_projects_from_files(files)
+
+    assert len(projects) == 1
+    assert projects[0]["path"] == "crm_system"
+    assert projects[0]["previewable"] is True
+    assert projects[0]["verification_status"] == "has smoke test"
+    assert "uploads/private.pdf" not in projects[0]["generated_files"]
+    assert _overall_verification_status([{"verification_status": "verified"}, {"verification_status": "needs repair"}]) == {"verified": 1, "needs repair": 1}
+
+def test_admin_dashboard_groups_user_generated_files_without_upload_leakage() -> None:
+    from app.routes.admin import _local_projects_from_files, _overall_verification_status
+
+    files = [
+        {"path": "crm_system/index.html", "session_id": "s1", "session_title": "CRM"},
+        {"path": "crm_system/tests/smoke_test.py", "session_id": "s1", "session_title": "CRM"},
+        {"path": "uploads/private.pdf", "session_id": "s1", "session_title": "CRM"},
+    ]
+    projects = _local_projects_from_files(files)
+
+    assert len(projects) == 1
+    assert projects[0]["path"] == "crm_system"
+    assert projects[0]["previewable"] is True
+    assert projects[0]["verification_status"] == "has smoke test"
+    assert "uploads/private.pdf" not in projects[0]["generated_files"]
+    assert _overall_verification_status([{"verification_status": "verified"}, {"verification_status": "needs repair"}]) == {"verified": 1, "needs repair": 1}
+
 def test_generated_file_validation_rejects_unsafe_paths() -> None:
     from app.routes.tasks import _validated_generated_files, TaskRunStep
 

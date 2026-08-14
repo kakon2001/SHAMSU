@@ -201,6 +201,34 @@ export interface AdminOverview {
     timestamp?: string;
     summary: string;
   }>;
+  persistent_dashboard?: {
+    local_projects: Array<{
+      name: string;
+      path: string;
+      files: number;
+      generated_files: string[];
+      previewable: boolean;
+      verification_status: string;
+    }>;
+    telegram_projects: {
+      project_count: number;
+      user_count: number;
+      latest_updated_at?: string | null;
+    };
+    uploads: Array<{
+      path: string;
+      session_id: string;
+      session_title: string;
+      timestamp?: string;
+    }>;
+    generated_files: Array<{
+      path: string;
+      session_id: string;
+      session_title: string;
+      timestamp?: string;
+    }>;
+    verification_status: Record<string, number>;
+  };
 }
 
 export interface ContextDashboard {
