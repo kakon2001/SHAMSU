@@ -10,11 +10,13 @@ Commands in Telegram:
     /use <project_id>   select one of this user's projects
     /history            show selected project history
     /stop               stop a busy selected project
+    attach PDF/DOCX/TXT upload and index a PRD/document
     any text            send prompt to the selected project
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import socket
@@ -44,6 +46,16 @@ def telegram_request(method: str, params: dict[str, Any] | None = None) -> dict[
     req = urllib.request.Request(f"{TELEGRAM_API}/{method}", data=data, method="POST")
     with urllib.request.urlopen(req, timeout=60) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def telegram_download_file(file_id: str) -> bytes:
+    info = telegram_request("getFile", {"file_id": file_id})
+    file_path = (info.get("result") or {}).get("file_path")
+    if not file_path:
+        raise RuntimeError("Telegram did not return a downloadable file path")
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    with urllib.request.urlopen(url, timeout=120) as response:
+        return response.read()
 
 
 def shamsu_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
@@ -89,6 +101,19 @@ def project_history(user_id: str, project_id: str) -> str:
 
 
 
+def upload_document(user_id: str, project_id: str, filename: str, data: bytes) -> str:
+    result = shamsu_request(
+        "POST",
+        f"/api/telegram/projects/{project_id}/document",
+        {
+            "telegram_user_id": user_id,
+            "filename": filename,
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        },
+    )
+    return result.get("reply") or f"Uploaded and indexed {filename}."
+
+
 def stop_selected_project(user_id: str, project_id: str) -> str:
     query = urllib.parse.urlencode({"telegram_user_id": user_id})
     result = shamsu_request("POST", f"/api/telegram/projects/{project_id}/stop?{query}")
@@ -108,7 +133,7 @@ def selected_or_latest_project(user_id: str) -> dict[str, Any] | None:
 def handle_text(chat_id: int, user_id: str, text: str) -> None:
     text = text.strip()
     if text in {"/start", "help", "/help"}:
-        send_message(chat_id, "SHAMSU Telegram bridge\n/new Project name - create private project\n/projects - list your projects\n/use <project_id> - select project\n/history - show selected project history\n/stop - stop a busy project\nThen send any prompt to the selected project.")
+        send_message(chat_id, "SHAMSU Telegram bridge\n/new Project name - create private project\n/projects - list your projects\n/use <project_id> - select project\n/history - show selected project history\n/stop - stop a busy project\nAttach PDF/DOCX/TXT/MD/PRD files to index them.\nThen send any prompt to the selected project.")
         return
     if text.startswith("/new"):
         title = text.removeprefix("/new").strip() or "Telegram project"
@@ -163,6 +188,42 @@ def handle_text(chat_id: int, user_id: str, text: str) -> None:
         {"telegram_user_id": user_id, "message": text},
     )
     send_message(chat_id, response.get("reply") or "SHAMSU finished, but no text reply was produced. Send /history to see project history.")
+def handle_document(chat_id: int, user_id: str, document: dict[str, Any]) -> None:
+    project = selected_or_latest_project(user_id)
+    if project is None:
+        project = create_project(user_id, "Telegram document project")
+        send_message(chat_id, f"Created your first private SHAMSU project: {project['title']}")
+
+    filename = document.get("file_name") or "telegram-upload.txt"
+    suffix = Path(filename).suffix.lower()
+    allowed = {".pdf", ".docx", ".txt", ".md", ".prd", ".csv", ".json", ".py", ".js", ".html", ".css", ".log"}
+    if suffix not in allowed:
+        send_message(chat_id, "Unsupported file type. Send PDF, DOCX, TXT, MD, PRD, or text/code files.")
+        return
+    file_size = int(document.get("file_size") or 0)
+    if file_size and file_size > 10 * 1024 * 1024:
+        send_message(chat_id, "This file is larger than SHAMSU's 10 MB upload limit.")
+        return
+    file_id = document.get("file_id")
+    if not file_id:
+        send_message(chat_id, "Telegram did not include a file id for this document.")
+        return
+    data = telegram_download_file(str(file_id))
+    send_message(chat_id, upload_document(user_id, project["id"], filename, data))
+
+
+def handle_document_safe(chat_id: int, user_id: str, document: dict[str, Any]) -> None:
+    print(f"Telegram document from {user_id}: {document.get('file_name') or document.get('file_id')}")
+    try:
+        handle_document(chat_id, user_id, document)
+    except Exception as exc:
+        print(f"Telegram document failed for {user_id}: {exc}")
+        try:
+            send_message(chat_id, f"SHAMSU Telegram upload error: {exc}\nCheck backend and supported file type, then try again.")
+        except Exception as send_exc:
+            print(f"Could not send Telegram upload error message: {send_exc}")
+
+
 def handle_text_safe(chat_id: int, user_id: str, text: str) -> None:
     print(f"Telegram message from {user_id}: {text}")
     try:
@@ -185,9 +246,15 @@ def main() -> None:
                 offset = max(offset, int(update["update_id"]) + 1)
                 message = update.get("message") or update.get("edited_message") or {}
                 text = message.get("text")
+                document = message.get("document")
                 chat = message.get("chat") or {}
                 user = message.get("from") or {}
-                if not text or "id" not in chat or "id" not in user:
+                if "id" not in chat or "id" not in user:
+                    continue
+                if document:
+                    handle_document_safe(int(chat["id"]), str(user["id"]), document)
+                    continue
+                if not text:
                     continue
                 handle_text_safe(int(chat["id"]), str(user["id"]), text)
         except (TimeoutError, socket.timeout) as exc:

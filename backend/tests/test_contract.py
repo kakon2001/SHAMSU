@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import socket
@@ -240,6 +241,150 @@ def test_telegram_simple_chat_records_history(backend_server: None) -> None:
     assert "You: Say hello in 2 lines" in history["summary"]
     assert "SHAMSU:" in history["summary"]
     assert "project_understanding" not in history["summary"]
+
+
+
+def test_telegram_code_prompt_creates_workspace_file(backend_server: None, test_env: dict[str, str]) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "444", "title": "Code chat"})
+    response = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "444", "message": "Write me a code to print hello world."},
+    )
+
+    created = Path(test_env["AGENT_WORKDIR"]) / "telegram_hello_world.py"
+    assert created.exists()
+    assert 'print("Hello, World!")' in created.read_text(encoding="utf-8")
+    assert "telegram_hello_world.py" in response["reply"]
+    assert "private SHAMSU Telegram project" not in response["reply"]
+
+
+def test_telegram_create_file_prompt_writes_safe_file(backend_server: None, test_env: dict[str, str]) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "445", "title": "File chat"})
+    response = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "445", "message": "create file telegram_note.txt"},
+    )
+
+    created = Path(test_env["AGENT_WORKDIR"]) / "telegram_note.txt"
+    assert created.exists()
+    assert "Created by SHAMSU Telegram" in created.read_text(encoding="utf-8")
+    assert "Created `telegram_note.txt`" in response["reply"]
+
+
+
+def test_telegram_natural_code_prompts_follow_user_request(backend_server: None, test_env: dict[str, str]) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "446", "title": "Natural code"})
+    table = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "446", "message": "Write me a for loop to print the table of n number"},
+    )
+    numbers = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "446", "message": "Write me for loop to print 1 to 100"},
+    )
+    custom = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/message",
+        {"telegram_user_id": "446", "message": "Can you write a code that will print \"My name is Kakon\""},
+    )
+
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    assert "telegram_multiplication_table.py" in table["reply"]
+    assert "n * i" in (workspace / "telegram_multiplication_table.py").read_text(encoding="utf-8")
+    assert "telegram_loop_1_to_100.py" in numbers["reply"]
+    assert "range(1, 101)" in (workspace / "telegram_loop_1_to_100.py").read_text(encoding="utf-8")
+    assert "My name is Kakon" in custom["reply"]
+    assert "My name is Kakon" in (workspace / "telegram_code.py").read_text(encoding="utf-8")
+    assert "Hello from SHAMSU Telegram" not in custom["reply"]
+
+
+
+def test_telegram_document_upload_indexes_prd_context(backend_server: None, test_env: dict[str, str]) -> None:
+    def telegram_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_BASE + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bridge-Secret": "pytest-telegram-secret",
+                "Connection": "close",
+            },
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+
+    project = telegram_request("POST", "/api/telegram/projects", {"telegram_user_id": "447", "title": "PRD upload"})
+    payload = base64.b64encode(b"OpenBazaar PRD requires buyers, sellers, auctions, COD, and admin audit logs.").decode("ascii")
+    uploaded = telegram_request(
+        "POST",
+        f"/api/telegram/projects/{project['id']}/document",
+        {"telegram_user_id": "447", "filename": "OpenBazaar.prd", "data_base64": payload},
+    )
+    history = telegram_request("GET", f"/api/telegram/projects/{project['id']}/history?telegram_user_id=447")
+
+    workspace = Path(test_env["AGENT_WORKDIR"])
+    context_file = workspace / uploaded["path"]
+    assert uploaded["kind"] == "text"
+    assert uploaded["path"].startswith("uploads/")
+    assert context_file.exists()
+    assert "buyers, sellers, auctions" in context_file.read_text(encoding="utf-8")
+    assert "Uploaded and indexed" in uploaded["reply"]
+    assert "Upload: OpenBazaar.prd" in history["summary"]
 
 def test_deployment_profile_uses_safe_env_placeholders() -> None:
     root = Path(__file__).resolve().parents[2]

@@ -29,6 +29,7 @@ TEXT_EXTENSIONS = {
     ".yaml",
     ".yml",
     ".log",
+    ".prd",
 }
 
 
